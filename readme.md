@@ -264,13 +264,10 @@ This repo intentionally stays minimal.
 
 ## 🪓 License
 
-Choose your own.
-
-If you don't care:
-
-* MIT is fine.
-* Or just say "Do whatever you want."
+* MIT
+  
 
 ---
+
 
 ---
