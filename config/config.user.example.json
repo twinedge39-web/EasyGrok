@@ -1,0 +1,36 @@
+{
+  "defaults": {
+    "timeout_sec": 3600,
+    "models": {
+      "text_reasoning": "grok-4-1-fast-reasoning",
+      "vision_chat": "grok-4",
+      "image": "grok-imagine-image"
+    },
+    "output": {
+      "dir": "./out",
+      "save_raw_json": true,
+      "print_mode": "minimal"
+    }
+  },
+
+  "text": {
+    "system_prompt": "You are a structured AI assistant. Reply primarily in Japanese. English may be used when appropriate.",
+    "user_prompt": "Explain the concept of entropy in simple terms."
+  },
+
+  "vision": {
+    "system_prompt": "You are a helpful assistant. Reply primarily in Japanese.",
+    "question": "What is visible in this image?",
+    "image_url": "https://science.nasa.gov/wp-content/uploads/2023/09/web-first-images-release.png"
+  },
+
+  "image": {
+    "prompt": "High-end fashion editorial photograph of an adult woman wearing an elegant satin dress, soft window light, cinematic photography, 85mm lens, shallow depth of field, no nudity, no erotic content.",
+    "resolution": "1k",
+    "aspect_ratio": "16:9",
+    "edit": {
+      "input_file": "example.jpg",
+      "prompt": "Keep the subject the same. Change the background to a sunny daytime city scene with clear skies. Maintain realistic lighting and camera angle."
+    }
+  }
+}
