@@ -42,6 +42,7 @@ FIELDS_IMAGE = [
     ("defaults.output.print_mode", "Print mode (minimal/content/none)"),
 
     ("defaults.models.image", "Image model"),
+    ("image.response_format", "Image response format (url/base64)"),
 
     ("image.prompt", "Image prompt (generate/batch)"),
     ("image.n", "Image n (batch count)"),
@@ -141,6 +142,13 @@ def ensure_images_dir(out_dir: str) -> Path:
 
 def now_stamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
+
+
+def save_image_bytes(image_bytes: bytes, dest_dir: Path, base_name: str, ext: str = ".jpg") -> Path:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    out_path = dest_dir / f"{base_name}{ext}"
+    out_path.write_bytes(image_bytes)
+    return out_path
 
 
 def get_cfg_path(args) -> Path:
@@ -335,6 +343,7 @@ def run_image(cfg: dict,
               n_override: Optional[int] = None,
               aspect_ratio_override: Optional[str] = None,
               resolution_override: Optional[str] = None,
+              image_format_override: Optional[str] = None,
               download: bool = False,
               download_dir: Optional[str] = None) -> None:
     timeout_sec = int(get_nested(cfg, "defaults.timeout_sec") or 3600)
@@ -344,6 +353,9 @@ def run_image(cfg: dict,
 
     aspect_ratio = aspect_ratio_override or get_nested(cfg, "image.aspect_ratio")
     resolution = resolution_override or get_nested(cfg, "image.resolution")
+    image_format = image_format_override or get_nested(cfg, "image.response_format") or "url"
+    if image_format not in ("url", "base64"):
+        raise SystemExit("ERROR: image response format must be 'url' or 'base64'.")
 
     client = Client(api_key=get_api_key(), timeout=timeout_sec)
 
@@ -361,26 +373,59 @@ def run_image(cfg: dict,
             if p:
                 saved_files.append(p.as_posix())
 
+    def _capture_single_image(resp, tag: str) -> None:
+        nonlocal urls, saved_files
+        if image_format == "base64":
+            image_bytes = getattr(resp, "image", None)
+            if image_bytes:
+                img_dir = Path(download_dir) if download_dir else ensure_images_dir(out_dir)
+                base = f"{tag}_{now_stamp()}_1"
+                p = save_image_bytes(image_bytes, img_dir, base)
+                saved_files.append(p.as_posix())
+            return
+
+        u = getattr(resp, "url", None)
+        if u:
+            urls = [u]
+        _maybe_download(urls, tag)
+
+    def _capture_batch_images(resps, tag: str) -> None:
+        nonlocal urls, saved_files
+        if image_format == "base64":
+            img_dir = Path(download_dir) if download_dir else ensure_images_dir(out_dir)
+            for i, r in enumerate((resps or []), start=1):
+                image_bytes = getattr(r, "image", None)
+                if not image_bytes:
+                    continue
+                base = f"{tag}_{now_stamp()}_{i}"
+                p = save_image_bytes(image_bytes, img_dir, base)
+                saved_files.append(p.as_posix())
+            return
+
+        for r in (resps or []):
+            u = getattr(r, "url", None)
+            if u:
+                urls.append(u)
+        _maybe_download(urls, tag)
+
     if mode == "generate":
         prompt = prompt_override or (get_nested(cfg, "image.prompt") or "")
         if not prompt:
             raise SystemExit("ERROR: image.prompt is empty.")
         resp = client.image.sample(
-            prompt=prompt, model=model, aspect_ratio=aspect_ratio, resolution=resolution
+            prompt=prompt, model=model, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
-        u = getattr(resp, "url", None)
-        if u:
-            urls = [u]
-        _maybe_download(urls, "image_generate")
+        _capture_single_image(resp, "image_generate")
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": "image.generate",
             "model": getattr(resp, "model", model),
             "prompt": prompt,
+            "image_format": image_format,
             "options": {"aspect_ratio": aspect_ratio, "resolution": resolution},
             "urls": urls,
             "saved_files": saved_files,
-            "content": "\n".join(urls) if urls else "",
+            "content": "\n".join(saved_files if saved_files else urls),
         }
         output_record(cfg, out_path, "image", record)
         return
@@ -394,22 +439,20 @@ def run_image(cfg: dict,
             raise SystemExit("ERROR: image.edit.input_file is empty.")
         data_url = _data_url_from_file(in_file)
         resp = client.image.sample(
-            prompt=prompt, model=model, image_url=data_url, aspect_ratio=aspect_ratio, resolution=resolution
+            prompt=prompt, model=model, image_url=data_url, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
-        u = getattr(resp, "url", None)
-        if u:
-            urls = [u]
-        _maybe_download(urls, "image_edit")
+        _capture_single_image(resp, "image_edit")
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": "image.edit",
             "model": getattr(resp, "model", model),
             "prompt": prompt,
             "input_file": in_file,
+            "image_format": image_format,
             "options": {"aspect_ratio": aspect_ratio, "resolution": resolution},
             "urls": urls,
             "saved_files": saved_files,
-            "content": "\n".join(urls) if urls else "",
+            "content": "\n".join(saved_files if saved_files else urls),
         }
         output_record(cfg, out_path, "image", record)
         return
@@ -429,22 +472,20 @@ def run_image(cfg: dict,
             raise SystemExit("ERROR: image.reference_edit.image_urls must be a JSON array with >= 1 URL.")
 
         resp = client.image.sample(
-            prompt=prompt, model=model, image_urls=image_urls, aspect_ratio=aspect_ratio, resolution=resolution
+            prompt=prompt, model=model, image_urls=image_urls, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
-        u = getattr(resp, "url", None)
-        if u:
-            urls = [u]
-        _maybe_download(urls, "image_reference_edit")
+        _capture_single_image(resp, "image_reference_edit")
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": "image.reference_edit",
             "model": getattr(resp, "model", model),
             "prompt": prompt,
             "image_urls": image_urls,
+            "image_format": image_format,
             "options": {"aspect_ratio": aspect_ratio, "resolution": resolution},
             "urls": urls,
             "saved_files": saved_files,
-            "content": "\n".join(urls) if urls else "",
+            "content": "\n".join(saved_files if saved_files else urls),
         }
         output_record(cfg, out_path, "image", record)
         return
@@ -457,23 +498,20 @@ def run_image(cfg: dict,
         if n < 1:
             raise SystemExit("ERROR: n must be >= 1.")
         resps = client.image.sample_batch(
-            prompt=prompt, model=model, n=n, aspect_ratio=aspect_ratio, resolution=resolution
+            prompt=prompt, model=model, n=n, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
-        for r in (resps or []):
-            u = getattr(r, "url", None)
-            if u:
-                urls.append(u)
-        _maybe_download(urls, "image_batch")
+        _capture_batch_images(resps, "image_batch")
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": "image.batch",
             "model": model,
             "prompt": prompt,
             "n": n,
+            "image_format": image_format,
             "options": {"aspect_ratio": aspect_ratio, "resolution": resolution},
             "urls": urls,
             "saved_files": saved_files,
-            "content": "\n".join(urls) if urls else "",
+            "content": "\n".join(saved_files if saved_files else urls),
         }
         output_record(cfg, out_path, "image", record)
         return
@@ -520,6 +558,7 @@ def _menu_help(mode: str) -> None:
     print("I      : RUN image (uses current in-memory config)")
     if mode == "img":
         print("      (I prompts for image mode: generate/edit/reference_edit/batch)")
+        print("      image.response_format is a config item; edit number + save to keep it as default")
 
 
 def _prompt_save_if_needed(cfg_path: Path, cfg: dict) -> None:
@@ -592,8 +631,21 @@ def filtered_menu_with_run(cfg_path: Path, cfg: dict) -> None:
         if c == "i":
             _prompt_save_if_needed(cfg_path, cfg)
 
-            # download?
-            dl = input("Download generated images now? (y/N): ").strip().lower() == "y"
+            current_format = get_nested(cfg, "image.response_format") or "url"
+            print(f"Current config image.response_format = {current_format}")
+            ans = input(f"image response format [{current_format}] (url/base64, blank=use current): ").strip().lower()
+            image_format = ans if ans else current_format
+            if image_format not in ("url", "base64"):
+                print("Canceled: image response format must be url or base64.")
+                continue
+            if image_format != current_format:
+                print("Temporary override only. Edit image.response_format in the menu and save if you want to keep it.")
+
+            dl = False
+            if image_format == "url":
+                dl = input("Download generated images now? (y/N): ").strip().lower() == "y"
+            else:
+                print("base64 mode: generated images will be saved directly as files.")
 
             print("\nImage mode:")
             print("1) generate")
@@ -613,18 +665,18 @@ def filtered_menu_with_run(cfg_path: Path, cfg: dict) -> None:
                     ans = input(f"input_file [{in_file}]: ").strip()
                     if ans:
                         in_file = ans
-                    run_image(cfg, mode="edit", input_file=in_file, download=dl)
+                    run_image(cfg, mode="edit", input_file=in_file, image_format_override=image_format, download=dl)
                 elif imode == "reference_edit":
                     print("image_urls: use config by default. If you want override, paste JSON array. Blank=use config.")
                     j = input("image_urls_json: ").strip()
-                    run_image(cfg, mode="reference_edit", image_urls_json=(j or None), download=dl)
+                    run_image(cfg, mode="reference_edit", image_urls_json=(j or None), image_format_override=image_format, download=dl)
                 elif imode == "batch":
                     n = get_nested(cfg, "image.n") or 4
                     ans = input(f"n [{n}]: ").strip()
                     n2 = int(ans) if ans else int(n)
-                    run_image(cfg, mode="batch", n_override=n2, download=dl)
+                    run_image(cfg, mode="batch", n_override=n2, image_format_override=image_format, download=dl)
                 else:
-                    run_image(cfg, mode="generate", download=dl)
+                    run_image(cfg, mode="generate", image_format_override=image_format, download=dl)
             except Exception as e:
                 print(f"RUN image failed: {e}", file=sys.stderr)
             continue
@@ -690,6 +742,7 @@ def cmd_image(args) -> int:
         n_override=args.n,
         aspect_ratio_override=args.aspect_ratio,
         resolution_override=args.resolution,
+        image_format_override=args.image_format,
         download=bool(args.download),
         download_dir=args.download_dir,
     )
@@ -727,6 +780,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_img.add_argument("-n", type=int, help="(batch) number of images")
     p_img.add_argument("--aspect-ratio", help="Override aspect_ratio (e.g. 16:9)")
     p_img.add_argument("--resolution", help="Override resolution (e.g. 2k)")
+    p_img.add_argument("--image-format", choices=["url", "base64"], help="Return URLs or save base64 image bytes")
     p_img.add_argument("--download", action="store_true", help="Download returned URL(s) immediately to ./out/images/")
     p_img.add_argument("--download-dir", help="Custom download directory (default: ./out/images/)")
     p_img.set_defaults(fn=cmd_image)
