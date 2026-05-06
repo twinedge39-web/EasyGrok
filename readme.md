@@ -1,273 +1,134 @@
----
+# EasyGrok
 
-# 🧠 Grok CLI Orchestrator
+EasyGrok is a small reproducible CLI harness for the xAI Grok API.
 
-Reproducible CLI environment for xAI Grok API.
-Minimal. Transparent. Hackable.
+It is built for local experiments where the important parts are explicit:
+models, prompts, context files, raw responses, Markdown output, and saved images.
 
----
+## Features
 
-## 📌 What This Is
+- Text completion
+- Vision analysis from image URL or local image file
+- Image generation, image edit, reference edit, and batch generation
+- Optional LLM rewrite before image generation
+- Markdown context memory
+- Short-term session logging
+- Raw JSON and Markdown output
+- Interactive config menu
 
-This is **not** a product.
-This is a **reproducibility-first CLI harness** for Grok API.
-
-* No GUI
-* No magic state
-* No hidden prompts
-* No middleware abstraction layer
-
-Everything is explicit.
-Everything is logged.
-
-Modify freely.
-
----
-
-## 🎯 Design Philosophy
-
-1. API is stateless → always send system prompt
-2. Save raw JSON every time
-3. Human-readable Markdown output
-4. No session illusions
-5. Config-driven execution
-
-If you want a polished UX, build your own on top.
-
----
-
-## 📂 Structure
-
-```
-project/
-│
-├─ config/
-│   └─ config.user.json
-│
-├─ out/
-│   ├─ text_raw_*.json
-│   ├─ vision_raw_*.json
-│   ├─ image_raw_*.json
-│   └─ images/
-│
-├─ easy.py
-└─ README.md
-```
-
----
-
-## 🛠 Requirements
-
-* Python 3.10+
-* xai-sdk
-
-Install:
-
-```bash
-pip install xai-sdk
-```
-
-Set API key:
-
-### macOS / Linux
-
-```bash
-export XAI_API_KEY="your_api_key"
-```
-
-### Windows (PowerShell)
+## Install
 
 ```powershell
-setx XAI_API_KEY "your_api_key"
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
----
+Set your API key:
 
-## ⚙️ Models (snapshot)
-
-Refer to snapshot memo:
-
-
-Default config uses:
-
-* grok-4-1-fast-reasoning
-* grok-2-vision-1212
-* grok-imagine-image
-
-Update as needed.
-
----
-
-## 🧩 Configuration
-
-Main config:
-
-`config/config.user.json`
-
-Reference template:
-
-
-Everything user-adjustable lives there:
-
-* models
-* prompts
-* output behavior
-* image settings
-
-No hidden runtime state.
-
----
-
-## 🚀 Usage
-
-### Text
-
-```bash
-python easy.py text
+```powershell
+setx XAI_API_KEY "your_xai_api_key"
 ```
 
-Override prompt:
+Restart the terminal after `setx`.
 
-```bash
-python easy.py text "Explain entropy in Japanese"
+## Configure
+
+Copy the example config and edit it locally:
+
+```powershell
+Copy-Item config\config.user.example.json config\config.user.json
 ```
 
----
+`config/config.user.json` is intentionally ignored by Git.
 
-### Vision
+## Usage
 
-```bash
-python easy.py vision --image-url https://example.com/image.jpg
+Text:
+
+```powershell
+py easy.py text "こんにちは。短く自己紹介して。"
 ```
 
-Local file:
+Vision:
 
-```bash
-python easy.py vision --image-file test.jpg
+```powershell
+py easy.py vision --image-url "https://example.com/image.jpg" "この画像を説明して。"
 ```
 
----
+Local image vision:
 
-### Image (Generate)
-
-```bash
-python easy.py image
+```powershell
+py easy.py vision --image-file ".\sample.jpg" "見えているものを説明して。"
 ```
 
-Batch:
+Image generation:
 
-```bash
-python easy.py image --mode batch -n 4
+```powershell
+py easy.py image "A quiet futuristic study room, warm desk light, cinematic realism"
 ```
 
-Download immediately:
+Image generation with base64 file saving:
 
-```bash
-python easy.py image --download
+```powershell
+py easy.py image "A clean product photo of a small robot assistant" --image-format base64
 ```
 
----
+Reference edit from local files:
 
-### Image Edit
-
-```bash
-python easy.py image --mode edit --input-file input.jpg
+```powershell
+py easy.py image --mode reference_edit --input-files ".\ref1.jpg" ".\ref2.jpg" "Combine the visual style of both references."
 ```
 
----
+Interactive menu:
 
-### Interactive Menu
-
-```bash
-python easy.py menu
+```powershell
+py easy.py menu
 ```
 
-Features:
+## Context Memory
 
-* Live config editing
-* Mode switching
-* Backup auto-created
-* Optional immediate execution
+EasyGrok can load Markdown context files before a text or vision run.
 
----
+The example config uses:
 
-## 📦 Output Policy
+- `memory/context.md`
+- `memory/assistant_profile.md`
+- `memory/session.md`
 
-Each run produces:
+Disable context for one run:
 
-### Raw JSON (canonical log)
-
-```json
-{
-  "ts": "...",
-  "mode": "...",
-  "model": "...",
-  "prompt": "...",
-  "content": "..."
-}
+```powershell
+py easy.py text --no-context "短く答えて。"
 ```
 
-### Markdown
+Disable session append for one run:
 
-Human-readable output only.
+```powershell
+py easy.py text --no-session "これはセッションログに残さないで。"
+```
 
-### Images
+## Output
 
-* URL always saved
-* Optional immediate download
+By default, EasyGrok writes output to `out/`.
 
-No silent discard.
+Typical files:
 
----
+- `text_*.md`
+- `text_raw_*.json`
+- `vision_*.md`
+- `vision_raw_*.json`
+- `image_*.md`
+- `image_raw_*.json`
+- `out/images/*`
 
-## ⚠️ Disclaimer
+`out/` is ignored by Git.
 
-* Generated images are subject to moderation.
-* Returned URLs may not be permanent.
-* No warranty.
-* No support.
-* No responsibility.
+## Public Safety
 
-This repository is provided as-is.
+This repository is a public-safe starter version.
 
----
+It does not include private API keys, private character material, generated image logs, or local experiment outputs.
 
-## 🔥 Why This Exists
+Keep personal configs, logs, prompts, generated media, and private memory files out of Git unless you intentionally want to publish them.
 
-Because UI != reproducibility.
-
-This tool exists to:
-
-* Test API behavior
-* Observe moderation differences
-* Compare model variants
-* Preserve raw evidence
-* Build your own orchestration layer
-
----
-
-## 🧩 Extend It Yourself
-
-Ideas:
-
-* Thread manager
-* Token usage tracker
-* Cost estimator
-* Batch experiment runner
-* Video model integration
-* Automatic retry logic
-* Prompt pass-rate logging
-
-This repo intentionally stays minimal.
-
----
-
-## 🪓 License
-
-* MIT
-  
-
----
-
-
----

@@ -9,9 +9,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
-
 from xai_sdk import Client
 from xai_sdk.chat import system, user, image
+
+BASE_DIR = Path(__file__).resolve().parent
 
 
 # ========= Field Groups =========
@@ -29,6 +30,10 @@ FIELDS_TEXT_VISION = [
     ("text.system_prompt", "System prompt (text)"),
     ("text.user_prompt", "User prompt (text)"),
 
+    ("memory.enabled", "Use Markdown context memory (true/false)"),
+    ("memory.context_files", "Markdown context files (JSON array)"),
+    ("memory.max_chars", "Max context chars"),
+
     ("vision.system_prompt", "System prompt (vision)"),
     ("vision.user_prompt", "User prompt (vision)"),
     ("vision.image_url", "Vision image_url (optional; for menu-run)"),
@@ -44,6 +49,8 @@ FIELDS_IMAGE = [
     ("defaults.models.image", "Image model"),
     ("image.response_format", "Image response format (url/base64)"),
 
+    ("image.system_prompt", "System prompt style instructions (prepended to image prompt)"),
+    ("image.llm_system_prompt", "LLM system prompt for image prompt rewrite"),
     ("image.prompt", "Image prompt (generate/batch)"),
     ("image.n", "Image n (batch count)"),
     ("image.aspect_ratio", "Image aspect_ratio (e.g. 16:9)"),
@@ -127,6 +134,134 @@ def backup(path: Path, data: dict) -> Path:
 
 
 # ========= Shared utils =========
+def resolve_project_path(path_value: str) -> Path:
+    p = Path(path_value).expanduser()
+    if p.is_absolute():
+        return p
+    return BASE_DIR / p
+
+
+def build_context_block(cfg: dict,
+                        override_files: Optional[list[str]] = None,
+                        disabled: bool = False) -> tuple[str, dict]:
+    if disabled:
+        return "", {"enabled": False, "files": [], "total_chars": 0, "truncated": False}
+
+    configured = get_nested(cfg, "memory.context_files") or []
+    enabled = bool(get_nested(cfg, "memory.enabled")) if get_nested(cfg, "memory.enabled") is not None else False
+
+    if override_files:
+        files = override_files
+        enabled = True
+    else:
+        files = configured
+
+    if isinstance(files, str):
+        files = [files]
+    if not enabled or not files:
+        return "", {"enabled": False, "files": [], "total_chars": 0, "truncated": False}
+
+    max_chars = int(get_nested(cfg, "memory.max_chars") or 12000)
+    chunks: list[str] = []
+    meta_files: list[dict] = []
+    used_chars = 0
+    truncated = False
+
+    for item in files:
+        path = resolve_project_path(str(item))
+        entry = {"path": str(path), "exists": path.exists(), "chars": 0, "used_chars": 0}
+        if not path.exists() or not path.is_file():
+            meta_files.append(entry)
+            continue
+        text = path.read_text(encoding="utf-8").strip()
+        entry["chars"] = len(text)
+        if not text:
+            meta_files.append(entry)
+            continue
+
+        remaining = max_chars - used_chars
+        if remaining <= 0:
+            truncated = True
+            meta_files.append(entry)
+            continue
+
+        header = f"## Context File: {item}\n"
+        available = max(0, remaining - len(header) - 2)
+        piece = text[:available]
+        if len(piece) < len(text):
+            truncated = True
+        entry["used_chars"] = len(piece)
+        chunks.append(header + piece)
+        used_chars += len(header) + len(piece) + 2
+        meta_files.append(entry)
+
+    if not chunks:
+        return "", {"enabled": True, "files": meta_files, "total_chars": 0, "truncated": truncated}
+
+    block = (
+        "Runtime Markdown Context:\n"
+        "Use the following project memory as background context. "
+        "Treat it as lower priority than the user's latest request.\n\n"
+        + "\n\n".join(chunks)
+    )
+    return block, {"enabled": True, "files": meta_files, "total_chars": used_chars, "truncated": truncated}
+
+
+def merge_system_with_context(system_prompt: str, context_block: str) -> str:
+    if not context_block:
+        return system_prompt
+    if not system_prompt:
+        return context_block
+    return f"{system_prompt.strip()}\n\n---\n\n{context_block.strip()}"
+
+
+def session_enabled(cfg: dict, disabled: bool = False) -> bool:
+    if disabled:
+        return False
+    value = get_nested(cfg, "memory.session.enabled")
+    return bool(value) if value is not None else False
+
+
+def get_session_path(cfg: dict) -> Path:
+    return resolve_project_path(get_nested(cfg, "memory.session.file") or "memory/session.md")
+
+
+def append_session_turn(cfg: dict, user_prompt: str, assistant_content: str, model: str) -> dict:
+    path = get_session_path(cfg)
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not path.exists():
+        path.write_text("# EasyGrok Session\n\n", encoding="utf-8")
+
+    stamp = datetime.now().isoformat(timespec="seconds")
+    max_assistant_chars = int(get_nested(cfg, "memory.session.max_assistant_chars") or 4000)
+    stored_content = assistant_content[:max_assistant_chars]
+    truncated = len(stored_content) < len(assistant_content)
+
+    turn = (
+        f"## {stamp}\n\n"
+        f"Model: `{model}`\n\n"
+        "User:\n"
+        f"{user_prompt.strip()}\n\n"
+        "Assistant:\n"
+        f"{stored_content.strip()}"
+        + ("\n\n[assistant content truncated]" if truncated else "")
+        + "\n\n"
+    )
+
+    with path.open("a", encoding="utf-8") as f:
+        f.write(turn)
+
+    return {
+        "enabled": True,
+        "file": str(path),
+        "appended": True,
+        "assistant_chars": len(assistant_content),
+        "stored_assistant_chars": len(stored_content),
+        "truncated": truncated,
+    }
+
+
 def ensure_out_dir(out_dir: str) -> Path:
     p = Path(out_dir)
     p.mkdir(parents=True, exist_ok=True)
@@ -256,15 +391,30 @@ def download_url_to_file(url: str, dest_dir: Path, base_name: str) -> Optional[P
     return None
 
 
+def safe_get_image_url(resp) -> Optional[str]:
+    try:
+        return getattr(resp, "url", None)
+    except Exception as e:
+        print(f"Image URL unavailable: {e}", file=sys.stderr)
+        return None
+
+
 # ========= Run (uses in-memory cfg) =========
-def run_text(cfg: dict, prompt_override: Optional[str] = None, system_override: Optional[str] = None) -> None:
+def run_text(cfg: dict,
+             prompt_override: Optional[str] = None,
+             system_override: Optional[str] = None,
+             context_files: Optional[list[str]] = None,
+             no_context: bool = False,
+             no_session: bool = False) -> None:
     timeout_sec = int(get_nested(cfg, "defaults.timeout_sec") or 3600)
     model = get_nested(cfg, "defaults.models.text_reasoning") or "grok-4-1-fast-reasoning"
     out_dir = get_nested(cfg, "defaults.output.dir") or "./out"
     out_path = ensure_out_dir(out_dir)
 
-    system_prompt = system_override or (get_nested(cfg, "text.system_prompt") or "You are a helpful assistant.")
+    base_system_prompt = system_override or (get_nested(cfg, "text.system_prompt") or "You are a helpful assistant.")
     user_prompt = prompt_override or (get_nested(cfg, "text.user_prompt") or "Hello.")
+    context_block, context_meta = build_context_block(cfg, context_files, no_context)
+    system_prompt = merge_system_with_context(base_system_prompt, context_block)
 
     client = Client(api_key=get_api_key(), timeout=timeout_sec)
     chat = client.chat.create(model=model)
@@ -274,13 +424,20 @@ def run_text(cfg: dict, prompt_override: Optional[str] = None, system_override: 
 
     resp = chat.sample()
     content = getattr(resp, "content", "") or ""
+    model_name = getattr(resp, "model", model)
+    session_meta = {"enabled": False, "appended": False}
+    if session_enabled(cfg, no_session):
+        session_meta = append_session_turn(cfg, user_prompt, content, model_name)
 
     record = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "mode": "text",
-        "model": getattr(resp, "model", model),
+        "model": model_name,
         "prompt": user_prompt,
         "system": system_prompt,
+        "base_system": base_system_prompt,
+        "context": context_meta,
+        "session": session_meta,
         "content": content,
     }
     output_record(cfg, out_path, "text", record)
@@ -290,14 +447,22 @@ def run_vision(cfg: dict,
               image_url: Optional[str] = None,
               image_file: Optional[str] = None,
               prompt_override: Optional[str] = None,
-              system_override: Optional[str] = None) -> None:
+              system_override: Optional[str] = None,
+              context_files: Optional[list[str]] = None,
+              no_context: bool = False) -> None:
     timeout_sec = int(get_nested(cfg, "defaults.timeout_sec") or 3600)
-    model = get_nested(cfg, "defaults.models.vision") or "grok-2-vision-1212"
+    model = (
+        get_nested(cfg, "defaults.models.vision")
+        or get_nested(cfg, "defaults.models.vision_chat")
+        or "grok-4.20-reasoning"
+    )
     out_dir = get_nested(cfg, "defaults.output.dir") or "./out"
     out_path = ensure_out_dir(out_dir)
 
-    system_prompt = system_override or (get_nested(cfg, "vision.system_prompt") or "You are a helpful assistant.")
+    base_system_prompt = system_override or (get_nested(cfg, "vision.system_prompt") or "You are a helpful assistant.")
     user_prompt = prompt_override or (get_nested(cfg, "vision.user_prompt") or "What's in this image?")
+    context_block, context_meta = build_context_block(cfg, context_files, no_context)
+    system_prompt = merge_system_with_context(base_system_prompt, context_block)
 
     if image_url and image_file:
         raise SystemExit("ERROR: Use either image_url or image_file, not both.")
@@ -319,7 +484,7 @@ def run_vision(cfg: dict,
     if system_prompt:
         chat.append(system(system_prompt))
 
-    chat.append(user(user_prompt, image(img_payload)))
+    chat.append(user(user_prompt, image(image_url=img_payload, detail="high")))
     resp = chat.sample()
     content = getattr(resp, "content", "") or ""
 
@@ -329,6 +494,8 @@ def run_vision(cfg: dict,
         "model": getattr(resp, "model", model),
         "prompt": user_prompt,
         "system": system_prompt,
+        "base_system": base_system_prompt,
+        "context": context_meta,
         "image": img_meta,
         "content": content,
     }
@@ -338,7 +505,12 @@ def run_vision(cfg: dict,
 def run_image(cfg: dict,
               mode: str = "generate",
               prompt_override: Optional[str] = None,
+              system_override: Optional[str] = None,
+              llm_system_override: Optional[str] = None,
+              rewrite_model_override: Optional[str] = None,
+              model_override: Optional[str] = None,
               input_file: Optional[str] = None,
+              input_files: Optional[list[str]] = None,
               image_urls_json: Optional[str] = None,
               n_override: Optional[int] = None,
               aspect_ratio_override: Optional[str] = None,
@@ -347,7 +519,7 @@ def run_image(cfg: dict,
               download: bool = False,
               download_dir: Optional[str] = None) -> None:
     timeout_sec = int(get_nested(cfg, "defaults.timeout_sec") or 3600)
-    model = get_nested(cfg, "defaults.models.image") or "grok-imagine-image"
+    model = model_override or get_nested(cfg, "defaults.models.image") or "grok-imagine-image"
     out_dir = get_nested(cfg, "defaults.output.dir") or "./out"
     out_path = ensure_out_dir(out_dir)
 
@@ -361,6 +533,53 @@ def run_image(cfg: dict,
 
     urls: list[str] = []
     saved_files: list[str] = []
+    system_prompt = system_override if system_override is not None else (get_nested(cfg, "image.system_prompt") or "")
+    llm_system_prompt = (
+        llm_system_override
+        if llm_system_override is not None
+        else (get_nested(cfg, "image.llm_system_prompt") or "")
+    )
+    rewrite_record = None
+
+    def _rewrite_prompt_with_llm(prompt: str) -> str:
+        nonlocal rewrite_record
+        if not llm_system_prompt:
+            return prompt
+        rewrite_model = (
+            rewrite_model_override
+            or get_nested(cfg, "defaults.models.text_non_reasoning")
+            or get_nested(cfg, "defaults.models.text_reasoning")
+            or "grok-4-1-fast-non-reasoning"
+        )
+        chat = client.chat.create(model=rewrite_model)
+        chat.append(system(llm_system_prompt))
+        chat.append(user(
+            "Rewrite the following request into one concise image-generation prompt. "
+            "Preserve the user's visual intent and all safety/age/context constraints. "
+            "Output only the final prompt text, with no markdown, no commentary, and no quotes.\n\n"
+            f"Request:\n{prompt.strip()}"
+        ))
+        resp = chat.sample()
+        rewritten = (getattr(resp, "content", "") or "").strip()
+        if not rewritten:
+            rewritten = prompt
+        rewrite_record = {
+            "model": getattr(resp, "model", rewrite_model),
+            "system": llm_system_prompt,
+            "input_prompt": prompt,
+            "output_prompt": rewritten,
+        }
+        return rewritten
+
+    def _effective_prompt(prompt: str) -> str:
+        if not system_prompt:
+            return prompt
+        return (
+            "Instruction profile:\n"
+            f"{system_prompt.strip()}\n\n"
+            "Image request:\n"
+            f"{prompt.strip()}"
+        )
 
     def _maybe_download(url_list: list[str], tag: str) -> None:
         nonlocal saved_files
@@ -376,15 +595,23 @@ def run_image(cfg: dict,
     def _capture_single_image(resp, tag: str) -> None:
         nonlocal urls, saved_files
         if image_format == "base64":
-            image_bytes = getattr(resp, "image", None)
+            try:
+                image_bytes = getattr(resp, "image", None)
+            except Exception as e:
+                print(f"Image base64 decode failed: {e}", file=sys.stderr)
+                image_bytes = None
             if image_bytes:
                 img_dir = Path(download_dir) if download_dir else ensure_images_dir(out_dir)
                 base = f"{tag}_{now_stamp()}_1"
                 p = save_image_bytes(image_bytes, img_dir, base)
                 saved_files.append(p.as_posix())
+                return
+            u = safe_get_image_url(resp)
+            if u:
+                urls = [u]
             return
 
-        u = getattr(resp, "url", None)
+        u = safe_get_image_url(resp)
         if u:
             urls = [u]
         _maybe_download(urls, tag)
@@ -394,8 +621,15 @@ def run_image(cfg: dict,
         if image_format == "base64":
             img_dir = Path(download_dir) if download_dir else ensure_images_dir(out_dir)
             for i, r in enumerate((resps or []), start=1):
-                image_bytes = getattr(r, "image", None)
+                try:
+                    image_bytes = getattr(r, "image", None)
+                except Exception as e:
+                    print(f"Image base64 decode failed for item {i}: {e}", file=sys.stderr)
+                    image_bytes = None
                 if not image_bytes:
+                    u = safe_get_image_url(r)
+                    if u:
+                        urls.append(u)
                     continue
                 base = f"{tag}_{now_stamp()}_{i}"
                 p = save_image_bytes(image_bytes, img_dir, base)
@@ -403,7 +637,7 @@ def run_image(cfg: dict,
             return
 
         for r in (resps or []):
-            u = getattr(r, "url", None)
+            u = safe_get_image_url(r)
             if u:
                 urls.append(u)
         _maybe_download(urls, tag)
@@ -412,15 +646,21 @@ def run_image(cfg: dict,
         prompt = prompt_override or (get_nested(cfg, "image.prompt") or "")
         if not prompt:
             raise SystemExit("ERROR: image.prompt is empty.")
+        llm_rewritten_prompt = _rewrite_prompt_with_llm(prompt)
+        effective_prompt = _effective_prompt(llm_rewritten_prompt)
         resp = client.image.sample(
-            prompt=prompt, model=model, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
+            prompt=effective_prompt, model=model, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
         _capture_single_image(resp, "image_generate")
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": "image.generate",
             "model": getattr(resp, "model", model),
+            "system": system_prompt,
+            "llm_rewrite": rewrite_record,
             "prompt": prompt,
+            "llm_rewritten_prompt": llm_rewritten_prompt,
+            "effective_prompt": effective_prompt,
             "image_format": image_format,
             "options": {"aspect_ratio": aspect_ratio, "resolution": resolution},
             "urls": urls,
@@ -438,15 +678,21 @@ def run_image(cfg: dict,
         if not in_file:
             raise SystemExit("ERROR: image.edit.input_file is empty.")
         data_url = _data_url_from_file(in_file)
+        llm_rewritten_prompt = _rewrite_prompt_with_llm(prompt)
+        effective_prompt = _effective_prompt(llm_rewritten_prompt)
         resp = client.image.sample(
-            prompt=prompt, model=model, image_url=data_url, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
+            prompt=effective_prompt, model=model, image_url=data_url, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
         _capture_single_image(resp, "image_edit")
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": "image.edit",
             "model": getattr(resp, "model", model),
+            "system": system_prompt,
+            "llm_rewrite": rewrite_record,
             "prompt": prompt,
+            "llm_rewritten_prompt": llm_rewritten_prompt,
+            "effective_prompt": effective_prompt,
             "input_file": in_file,
             "image_format": image_format,
             "options": {"aspect_ratio": aspect_ratio, "resolution": resolution},
@@ -460,6 +706,8 @@ def run_image(cfg: dict,
     if mode == "reference_edit":
         prompt = prompt_override or (get_nested(cfg, "image.reference_edit.prompt") or "")
         image_urls = get_nested(cfg, "image.reference_edit.image_urls") or []
+        if input_files:
+            image_urls = [_data_url_from_file(p) for p in input_files]
         if image_urls_json:
             try:
                 image_urls = json.loads(image_urls_json)
@@ -471,16 +719,23 @@ def run_image(cfg: dict,
         if not isinstance(image_urls, list) or len(image_urls) < 1:
             raise SystemExit("ERROR: image.reference_edit.image_urls must be a JSON array with >= 1 URL.")
 
+        llm_rewritten_prompt = _rewrite_prompt_with_llm(prompt)
+        effective_prompt = _effective_prompt(llm_rewritten_prompt)
         resp = client.image.sample(
-            prompt=prompt, model=model, image_urls=image_urls, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
+            prompt=effective_prompt, model=model, image_urls=image_urls, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
         _capture_single_image(resp, "image_reference_edit")
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": "image.reference_edit",
             "model": getattr(resp, "model", model),
+            "system": system_prompt,
+            "llm_rewrite": rewrite_record,
             "prompt": prompt,
-            "image_urls": image_urls,
+            "llm_rewritten_prompt": llm_rewritten_prompt,
+            "effective_prompt": effective_prompt,
+            "input_files": input_files or [],
+            "image_urls": [] if input_files else image_urls,
             "image_format": image_format,
             "options": {"aspect_ratio": aspect_ratio, "resolution": resolution},
             "urls": urls,
@@ -497,15 +752,21 @@ def run_image(cfg: dict,
             raise SystemExit("ERROR: image.prompt is empty.")
         if n < 1:
             raise SystemExit("ERROR: n must be >= 1.")
+        llm_rewritten_prompt = _rewrite_prompt_with_llm(prompt)
+        effective_prompt = _effective_prompt(llm_rewritten_prompt)
         resps = client.image.sample_batch(
-            prompt=prompt, model=model, n=n, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
+            prompt=effective_prompt, model=model, n=n, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
         _capture_batch_images(resps, "image_batch")
         record = {
             "ts": datetime.now().isoformat(timespec="seconds"),
             "mode": "image.batch",
             "model": model,
+            "system": system_prompt,
+            "llm_rewrite": rewrite_record,
             "prompt": prompt,
+            "llm_rewritten_prompt": llm_rewritten_prompt,
+            "effective_prompt": effective_prompt,
             "n": n,
             "image_format": image_format,
             "options": {"aspect_ratio": aspect_ratio, "resolution": resolution},
@@ -715,7 +976,14 @@ def cmd_menu(args) -> int:
 
 def cmd_text(args) -> int:
     cfg = load_json(get_cfg_path(args))
-    run_text(cfg, prompt_override=args.prompt, system_override=args.system)
+    run_text(
+        cfg,
+        prompt_override=args.prompt,
+        system_override=args.system,
+        context_files=args.context,
+        no_context=bool(args.no_context),
+        no_session=bool(args.no_session),
+    )
     return 0
 
 
@@ -726,7 +994,9 @@ def cmd_vision(args) -> int:
         image_url=args.image_url,
         image_file=args.image_file,
         prompt_override=args.prompt,
-        system_override=args.system
+        system_override=args.system,
+        context_files=args.context,
+        no_context=bool(args.no_context),
     )
     return 0
 
@@ -737,7 +1007,12 @@ def cmd_image(args) -> int:
         cfg,
         mode=args.mode,
         prompt_override=args.prompt,
+        system_override=args.system,
+        llm_system_override=args.llm_system,
+        rewrite_model_override=args.rewrite_model,
+        model_override=args.model,
         input_file=args.input_file,
+        input_files=args.input_files,
         image_urls_json=args.image_urls_json,
         n_override=args.n,
         aspect_ratio_override=args.aspect_ratio,
@@ -763,6 +1038,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_text = sub.add_parser("text", help="Run text LLM")
     p_text.add_argument("prompt", nargs="?", help="Override user prompt")
     p_text.add_argument("--system", help="Override system prompt")
+    p_text.add_argument("--context", nargs="+", help="Override Markdown context files for this run")
+    p_text.add_argument("--no-context", action="store_true", help="Disable Markdown context for this run")
+    p_text.add_argument("--no-session", action="store_true", help="Do not append this text run to the session log")
     p_text.set_defaults(fn=cmd_text)
 
     p_vis = sub.add_parser("vision", help="Analyze image (URL or local file) with vision model")
@@ -770,12 +1048,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_vis.add_argument("--image-file", help="Local image path (.png/.jpg)")
     p_vis.add_argument("prompt", nargs="?", help="Override user prompt")
     p_vis.add_argument("--system", help="Override system prompt")
+    p_vis.add_argument("--context", nargs="+", help="Override Markdown context files for this run")
+    p_vis.add_argument("--no-context", action="store_true", help="Disable Markdown context for this run")
     p_vis.set_defaults(fn=cmd_vision)
 
     p_img = sub.add_parser("image", help="Generate/edit images and save URLs (optional download)")
     p_img.add_argument("--mode", choices=["generate", "edit", "reference_edit", "batch"], default="generate")
     p_img.add_argument("prompt", nargs="?", help="Override prompt (otherwise from config)")
+    p_img.add_argument("--system", help="System-style instructions to prepend to image prompt")
+    p_img.add_argument("--llm-system", help="Actual chat-model system prompt used to rewrite the image prompt before generation")
+    p_img.add_argument("--rewrite-model", help="Override chat model used for --llm-system prompt rewrite")
+    p_img.add_argument("--model", help="Override image model (e.g. grok-imagine-image-pro)")
     p_img.add_argument("--input-file", help="(edit) Local image path (.png/.jpg)")
+    p_img.add_argument("--input-files", nargs="+", help="(reference_edit) Local image paths (.png/.jpg)")
     p_img.add_argument("--image-urls-json", help="(reference_edit) JSON array of image URLs")
     p_img.add_argument("-n", type=int, help="(batch) number of images")
     p_img.add_argument("--aspect-ratio", help="Override aspect_ratio (e.g. 16:9)")
