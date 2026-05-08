@@ -779,6 +779,8 @@ class EasyGrokUI(tk.Tk):
                 cmd += ["-n", str(record["n"])]
             prompt = record.get("prompt")
             if prompt:
+                if image_mode == "reference_edit" and record.get("input_files"):
+                    cmd.append("--")
                 cmd.append(str(prompt))
             return cmd
 
@@ -1066,6 +1068,8 @@ class EasyGrokUI(tk.Tk):
             if mode == "batch":
                 cmd += ["-n", self.batch_n.get().strip() or "4"]
             if prompt:
+                if mode == "reference_edit" and files:
+                    cmd.append("--")
                 cmd.append(prompt)
             return cmd
 

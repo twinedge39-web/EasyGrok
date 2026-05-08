@@ -113,7 +113,7 @@ python easy.py imagine-natural "静かな未来的な書斎の画像を作って
 Reference edit from local files:
 
 ```powershell
-python easy.py image --mode reference_edit --input-files ".\ref1.jpg" ".\ref2.jpg" "Combine the visual style of both references."
+python easy.py image --mode reference_edit --input-files ".\ref1.jpg" ".\ref2.jpg" -- "Combine the visual style of both references."
 ```
 
 Interactive menu:
