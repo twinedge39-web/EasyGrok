@@ -5,6 +5,12 @@ EasyGrok is a small reproducible CLI harness for the xAI Grok API.
 It is built for local experiments where the important parts are explicit:
 models, prompts, context files, raw responses, Markdown output, and saved images.
 
+![EasyGrok logs and replay UI](docs/screenshots/easygrok-logs.png)
+
+EasyGrok is not just an image generator wrapper. It is a local experiment bench
+for comparing text, vision, image, Imagine relay, natural prompt extraction,
+memory context, logs, and replayable API runs.
+
 ## Features
 
 - Text completion
@@ -16,8 +22,10 @@ models, prompts, context files, raw responses, Markdown output, and saved images
 - Markdown context memory
 - Short-term session logging
 - Raw JSON and Markdown output
-- Interactive config menu
 - Tkinter prompt console for editing config, running commands, viewing logs, and replaying runs
+- Logs tab with Markdown reading, raw JSON pairing, and replay command preview
+- Memory tab for context files, session reset, and selected vision analysis handoff
+- Output tab for log, image, and video directory configuration
 - Public-safe model catalog reference in config
 
 ## Install
@@ -25,7 +33,7 @@ models, prompts, context files, raw responses, Markdown output, and saved images
 ```powershell
 py -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
 Set your API key:
@@ -51,77 +59,91 @@ Copy-Item config\config.user.example.json config\config.user.json
 Text:
 
 ```powershell
-py easy.py text "こんにちは。短く自己紹介して。"
+python easy.py text "こんにちは。短く自己紹介して。"
 ```
 
 Vision:
 
 ```powershell
-py easy.py vision --image-url "https://example.com/image.jpg" "この画像を説明して。"
+python easy.py vision --image-url "https://example.com/image.jpg" "この画像を説明して。"
 ```
 
 Local image vision:
 
 ```powershell
-py easy.py vision --image-file ".\sample.jpg" "見えているものを説明して。"
+python easy.py vision --image-file ".\sample.jpg" "見えているものを説明して。"
 ```
 
 Image generation:
 
 ```powershell
-py easy.py image "A quiet futuristic study room, warm desk light, cinematic realism"
+python easy.py image "A quiet futuristic study room, warm desk light, cinematic realism"
 ```
 
 Image generation with base64 file saving:
 
 ```powershell
-py easy.py image "A clean product photo of a small robot assistant" --image-format base64
+python easy.py image "A clean product photo of a small robot assistant" --image-format base64
 ```
 
 Imagine relay:
 
 ```powershell
-py easy.py imagine "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
+python easy.py imagine "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
 ```
 
 Prompt conversion only:
 
 ```powershell
-py easy.py imagine "静かな未来的な書斎の画像を作って。" --dry-run
+python easy.py imagine "静かな未来的な書斎の画像を作って。" --dry-run
 ```
 
 Natural request relay:
 
 ```powershell
-py easy.py imagine-natural "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
+python easy.py imagine-natural "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
 ```
 
 Natural prompt extraction only:
 
 ```powershell
-py easy.py imagine-natural "静かな未来的な書斎の画像を作って。" --dry-run
+python easy.py imagine-natural "静かな未来的な書斎の画像を作って。" --dry-run
 ```
 
 Reference edit from local files:
 
 ```powershell
-py easy.py image --mode reference_edit --input-files ".\ref1.jpg" ".\ref2.jpg" "Combine the visual style of both references."
+python easy.py image --mode reference_edit --input-files ".\ref1.jpg" ".\ref2.jpg" "Combine the visual style of both references."
 ```
 
 Interactive menu:
 
 ```powershell
-py easy.py menu
+python easy.py menu
 ```
 
 Tkinter prompt console:
 
 ```powershell
-py ui_tk.py
+python ui_tk.py
 ```
 
 The UI reads `config/config.user.json`, creates a timestamped backup before saving,
 previews the command it will run, and shows stdout/stderr after execution.
+
+## UI Workflow
+
+The prompt console is designed to keep local experiments inspectable:
+
+- Use `Text`, `Vision`, `Image`, and `Video` tabs to prepare API routes.
+- Use `Preview` to inspect the exact command before running it.
+- Use `Logs` to read Markdown logs and rebuild replay commands from raw JSON.
+- Use `Memory` to see which Markdown files are currently injected as context.
+- Use `Output` to control where logs, images, and future video outputs are saved.
+
+Suggested README screenshot:
+
+- `docs/screenshots/easygrok-logs.png`: Logs tab showing Markdown output, JSON status, and replay preview.
 
 The `Logs` tab reads Markdown logs from `out/logs/md`, pairs them with raw JSON
 records from `out/logs/json`, and can rebuild a replay command from the JSON.
@@ -137,18 +159,19 @@ The example config uses:
 
 - `memory/context.md`
 - `memory/assistant_profile.md`
+- `memory/vision_notes.md`
 - `memory/session.md`
 
 Disable context for one run:
 
 ```powershell
-py easy.py text --no-context "短く答えて。"
+python easy.py text --no-context "短く答えて。"
 ```
 
 Disable session append for one run:
 
 ```powershell
-py easy.py text --no-session "これはセッションログに残さないで。"
+python easy.py text --no-session "これはセッションログに残さないで。"
 ```
 
 ## Output
@@ -164,6 +187,7 @@ Typical files:
 - `out/logs/md/image_*.md`
 - `out/logs/json/image_raw_*.json`
 - `out/images/*`
+- `out/videos/*`
 
 `out/` is ignored by Git.
 
