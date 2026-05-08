@@ -5,7 +5,7 @@ EasyGrok is a small reproducible CLI harness for the xAI Grok API.
 It is built for local experiments where the important parts are explicit:
 models, prompts, context files, raw responses, Markdown output, and saved images.
 
-![EasyGrok logs and replay UI](docs/screenshots/easygrok-logs.png)
+![EasyGrok prompt console](docs/screenshots/easygrok-console.png)
 
 EasyGrok is not just an image generator wrapper. It is a local experiment bench
 for comparing text, vision, image, Imagine relay, natural prompt extraction,
@@ -143,7 +143,7 @@ The prompt console is designed to keep local experiments inspectable:
 
 Suggested README screenshot:
 
-- `docs/screenshots/easygrok-logs.png`: Logs tab showing Markdown output, JSON status, and replay preview.
+- `docs/screenshots/easygrok-console.png`: Prompt console showing model selection, prompt fields, command preview, and run output.
 
 The `Logs` tab reads Markdown logs from `out/logs/md`, pairs them with raw JSON
 records from `out/logs/json`, and can rebuild a replay command from the JSON.
