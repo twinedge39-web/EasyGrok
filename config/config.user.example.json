@@ -9,6 +9,10 @@
     },
     "output": {
       "dir": "./out",
+      "raw_json_dir": "logs/json",
+      "md_dir": "logs/md",
+      "image_dir": "images",
+      "video_dir": "videos",
       "save_raw_json": true,
       "print_mode": "content",
       "save_md": true
@@ -23,12 +27,16 @@
     "context_files": [
       "memory/context.md",
       "memory/assistant_profile.md",
+      "memory/vision_notes.md",
       "memory/session.md"
     ],
     "max_chars": 12000,
     "session": {
       "enabled": true,
       "file": "memory/session.md",
+      "template_file": "memory/session.template.md",
+      "archive_dir": "memory/archive/session",
+      "backup_on_reset": true,
       "max_assistant_chars": 4000
     }
   },
@@ -53,5 +61,33 @@
       "image_urls": []
     },
     "n": 4
+  },
+  "video": {
+    "prompt": ""
+  },
+  "model_catalog": {
+    "updated_at": "2026-05-08",
+    "source_note": "Manual reference list for the EasyGrok UI. Update this block when xAI model names change.",
+    "language": [
+      "grok-4.3",
+      "grok-4.20-multi-agent-0309",
+      "grok-4.20-0309-reasoning",
+      "grok-4.20-0309-non-reasoning",
+      "grok-4-1-fast-reasoning",
+      "grok-4-1-fast-non-reasoning"
+    ],
+    "image": [
+      "grok-imagine-image",
+      "grok-imagine-image-quality",
+      "grok-imagine-image-pro"
+    ],
+    "video": [
+      "grok-imagine-video"
+    ],
+    "voice_audio": [
+      "Realtime API",
+      "Text to Speech",
+      "Speech to Text"
+    ]
   }
 }

@@ -10,11 +10,15 @@ models, prompts, context files, raw responses, Markdown output, and saved images
 - Text completion
 - Vision analysis from image URL or local image file
 - Image generation, image edit, reference edit, and batch generation
+- Imagine relay: language Grok converts a request into an Imagine prompt, then runs image generation
+- Natural Imagine relay: ask language Grok for an image naturally, extract the prompt it suggests, then run image generation
 - Optional LLM rewrite before image generation
 - Markdown context memory
 - Short-term session logging
 - Raw JSON and Markdown output
 - Interactive config menu
+- Tkinter prompt console for editing config, running commands, viewing logs, and replaying runs
+- Public-safe model catalog reference in config
 
 ## Install
 
@@ -74,6 +78,30 @@ Image generation with base64 file saving:
 py easy.py image "A clean product photo of a small robot assistant" --image-format base64
 ```
 
+Imagine relay:
+
+```powershell
+py easy.py imagine "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
+```
+
+Prompt conversion only:
+
+```powershell
+py easy.py imagine "静かな未来的な書斎の画像を作って。" --dry-run
+```
+
+Natural request relay:
+
+```powershell
+py easy.py imagine-natural "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
+```
+
+Natural prompt extraction only:
+
+```powershell
+py easy.py imagine-natural "静かな未来的な書斎の画像を作って。" --dry-run
+```
+
 Reference edit from local files:
 
 ```powershell
@@ -85,6 +113,21 @@ Interactive menu:
 ```powershell
 py easy.py menu
 ```
+
+Tkinter prompt console:
+
+```powershell
+py ui_tk.py
+```
+
+The UI reads `config/config.user.json`, creates a timestamped backup before saving,
+previews the command it will run, and shows stdout/stderr after execution.
+
+The `Logs` tab reads Markdown logs from `out/logs/md`, pairs them with raw JSON
+records from `out/logs/json`, and can rebuild a replay command from the JSON.
+
+The model picker buttons read `model_catalog` from the config file, so model names
+can be updated without changing the UI code.
 
 ## Context Memory
 
@@ -114,12 +157,12 @@ By default, EasyGrok writes output to `out/`.
 
 Typical files:
 
-- `text_*.md`
-- `text_raw_*.json`
-- `vision_*.md`
-- `vision_raw_*.json`
-- `image_*.md`
-- `image_raw_*.json`
+- `out/logs/md/text_*.md`
+- `out/logs/json/text_raw_*.json`
+- `out/logs/md/vision_*.md`
+- `out/logs/json/vision_raw_*.json`
+- `out/logs/md/image_*.md`
+- `out/logs/json/image_raw_*.json`
 - `out/images/*`
 
 `out/` is ignored by Git.
@@ -131,4 +174,3 @@ This repository is a public-safe starter version.
 It does not include private API keys, private character material, generated image logs, or local experiment outputs.
 
 Keep personal configs, logs, prompts, generated media, and private memory files out of Git unless you intentionally want to publish them.
-

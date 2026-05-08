@@ -13,5 +13,5 @@ tmp/
 *.token
 
 config/config.user.json
+config/*.bak_*
 config/*.local.json
-
