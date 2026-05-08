@@ -143,11 +143,12 @@ class EasyGrokUI(tk.Tk):
         side = ttk.Frame(root)
         side.grid(row=0, column=1, sticky="nsew")
         side.columnconfigure(0, weight=1)
-        side.rowconfigure(2, weight=1)
+        side.rowconfigure(1, weight=1)
+        side.rowconfigure(3, weight=3)
 
         ttk.Label(side, text="Command Preview").grid(row=0, column=0, sticky="w")
-        self.command_text = tk.Text(side, height=7, wrap="word")
-        self.command_text.grid(row=1, column=0, sticky="ew", pady=(4, 10))
+        self.command_text = tk.Text(side, height=12, wrap="word")
+        self.command_text.grid(row=1, column=0, sticky="nsew", pady=(4, 10))
         self.command_text.configure(state="disabled")
 
         ttk.Label(side, text="Run Output").grid(row=2, column=0, sticky="nw")
