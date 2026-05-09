@@ -20,7 +20,9 @@
   },
   "text": {
     "system_prompt": "You are a calm, friendly, practical assistant. Reply primarily in Japanese. Be concise, clear, and useful. Put the answer first, then minimal supporting detail when helpful.",
-    "user_prompt": "こんにちは。今日できることを短く教えて。"
+    "user_prompt": "こんにちは。今日できることを短く教えて。",
+    "image_url": "",
+    "image_file": ""
   },
   "memory": {
     "enabled": true,
@@ -64,6 +66,17 @@
   },
   "video": {
     "prompt": ""
+  },
+  "tools": {
+    "instructions_enabled": true,
+    "active": {
+      "text": true,
+      "vision": true,
+      "image": true,
+      "imagine": true,
+      "imagine-natural": true,
+      "video": false
+    }
   },
   "model_catalog": {
     "updated_at": "2026-05-08",

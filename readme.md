@@ -14,6 +14,7 @@ memory context, logs, and replayable API runs.
 ## Features
 
 - Text completion
+- Text completion with optional image URL or local image attachment
 - Vision analysis from image URL or local image file
 - Image generation, image edit, reference edit, and batch generation
 - Imagine relay: language Grok converts a request into an Imagine prompt, then runs image generation
@@ -26,7 +27,14 @@ memory context, logs, and replayable API runs.
 - Logs tab with Markdown reading, raw JSON pairing, and replay command preview
 - Memory tab for context files, session reset, and selected vision analysis handoff
 - Output tab for log, image, and video directory configuration
+- Tool request detection for approved `easy.py` routes
+- Semi-automatic review handoff for the most recently generated image
 - Public-safe model catalog reference in config
+
+Note: the `video` route is currently a scaffold only. The UI has a Video tab and
+output directory settings, but EasyGrok does not call a video generation API yet.
+Video generation can be significantly more expensive than text or image tests,
+so this public starter keeps it explicit and unfinished by default.
 
 ## Install
 
@@ -72,6 +80,12 @@ Local image vision:
 
 ```powershell
 python easy.py vision --image-file ".\sample.jpg" "見えているものを説明して。"
+```
+
+Text with an attached local image:
+
+```powershell
+python easy.py text --image-file ".\sample.jpg" "この画像を見て、改善案を短く出して。"
 ```
 
 Image generation:
@@ -135,11 +149,15 @@ previews the command it will run, and shows stdout/stderr after execution.
 
 The prompt console is designed to keep local experiments inspectable:
 
-- Use `Text`, `Vision`, `Image`, and `Video` tabs to prepare API routes.
+- Use `Text`, `Vision`, and `Image` tabs to prepare active API routes.
+- Use the `Video` tab as a placeholder for future video experiments.
 - Use `Preview` to inspect the exact command before running it.
 - Use `Logs` to read Markdown logs and rebuild replay commands from raw JSON.
 - Use `Memory` to see which Markdown files are currently injected as context.
 - Use `Output` to control where logs, images, and future video outputs are saved.
+- After image generation, use `Use Recent Generate` in the Text tab to attach
+  the last generated image and prepare a review prompt. The user still presses
+  `Run`; EasyGrok does not automatically send generated media back to Grok.
 
 Suggested README screenshot:
 
@@ -150,6 +168,35 @@ records from `out/logs/json`, and can rebuild a replay command from the JSON.
 
 The model picker buttons read `model_catalog` from the config file, so model names
 can be updated without changing the UI code.
+
+## Tool Requests
+
+The UI can detect a supported JSON tool request in a successful text response:
+
+```json
+{
+  "action": "run_easy_command",
+  "route": "image",
+  "args": {
+    "mode": "generate",
+    "prompt": "A quiet futuristic study room",
+    "aspect_ratio": "2:3",
+    "resolution": "1k",
+    "image_format": "base64"
+  }
+}
+```
+
+When detected, the command is shown in `Command Preview` and waits for human approval.
+Press `Run` to approve and execute, or `Reject Tool` to discard it.
+
+Only fixed `easy.py` routes are accepted. Arbitrary shell commands, arbitrary Python,
+file deletion, Git operations, and API key access are not tool routes.
+
+When a text run includes an attached image, EasyGrok also passes attachment
+metadata in the prompt text. This lets Grok see the image and, when it proposes
+an approved tool request, refer to the exact local `image_file` or `image_url`
+value that EasyGrok can execute.
 
 ## Context Memory
 
@@ -187,9 +234,16 @@ Typical files:
 - `out/logs/md/image_*.md`
 - `out/logs/json/image_raw_*.json`
 - `out/images/*`
-- `out/videos/*`
+- `out/videos/*` for future video outputs
 
 `out/` is ignored by Git.
+
+## Video Status
+
+Video support is intentionally not implemented as an automatic generation path
+in this starter. The project keeps a Video tab and a placeholder route so the
+workflow can be extended later, but it avoids accidental video API calls and
+unexpected cost. Treat video experiments as a future explicit extension.
 
 ## Public Safety
 

@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 import re
@@ -8,6 +9,13 @@ from datetime import datetime
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+
+from core.tool_runner import (
+    ToolRequestError,
+    build_easy_command_from_request,
+    extract_tool_request,
+    tool_request_summary,
+)
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -69,17 +77,32 @@ class EasyGrokUI(tk.Tk):
         self.geometry("1400x860")
         self.minsize(1180, 720)
 
+        self._configure_fonts()
         self.cfg = load_json(CONFIG_PATH)
         self.current_command: list[str] = []
+        self.pending_tool_request: dict | None = None
+        self.pending_tool_command: list[str] = []
         self.log_replay_command: list[str] = []
         self.selected_log_record: dict | None = None
         self.selected_log_path: Path | None = None
+        self.last_review_image_file = ""
         self.process_running = False
 
         self._build_vars()
         self._build_layout()
         self._refresh_command_preview()
         self._log("Ready.")
+
+    def _configure_fonts(self):
+        self.ui_font = ("Segoe UI", 10)
+        self.mono_font = ("Consolas", 10)
+        self.option_add("*Font", self.ui_font)
+        style = ttk.Style(self)
+        for style_name in ("TLabel", "TButton", "TCheckbutton", "TEntry", "TCombobox", "TNotebook.Tab"):
+            style.configure(style_name, font=self.ui_font)
+
+    def _text(self, parent, **kwargs) -> tk.Text:
+        return tk.Text(parent, font=self.mono_font, **kwargs)
 
     def _build_vars(self):
         self.text_model = tk.StringVar(value=get_nested(self.cfg, "defaults.models.text_reasoning", ""))
@@ -103,6 +126,9 @@ class EasyGrokUI(tk.Tk):
         self.session_archive_dir = tk.StringVar(value=get_nested(self.cfg, "memory.session.archive_dir", "memory/archive/session"))
         self.session_backup_on_reset = tk.BooleanVar(value=bool(get_nested(self.cfg, "memory.session.backup_on_reset", True)))
 
+        self.text_image_url = tk.StringVar(value=get_nested(self.cfg, "text.image_url", ""))
+        self.text_image_file = tk.StringVar(value=get_nested(self.cfg, "text.image_file", ""))
+        self.recent_generate_file = tk.StringVar(value="")
         self.vision_url = tk.StringVar(value=get_nested(self.cfg, "vision.image_url", ""))
         self.vision_file = tk.StringVar(value="")
 
@@ -147,12 +173,12 @@ class EasyGrokUI(tk.Tk):
         side.rowconfigure(3, weight=3)
 
         ttk.Label(side, text="Command Preview").grid(row=0, column=0, sticky="w")
-        self.command_text = tk.Text(side, height=12, wrap="word")
+        self.command_text = self._text(side, height=12, wrap="word")
         self.command_text.grid(row=1, column=0, sticky="nsew", pady=(4, 10))
         self.command_text.configure(state="disabled")
 
         ttk.Label(side, text="Run Output").grid(row=2, column=0, sticky="nw")
-        self.output_text = tk.Text(side, wrap="word")
+        self.output_text = self._text(side, wrap="word")
         self.output_text.grid(row=3, column=0, sticky="nsew", pady=(4, 10))
 
         buttons = ttk.Frame(side)
@@ -160,10 +186,13 @@ class EasyGrokUI(tk.Tk):
         buttons.columnconfigure(0, weight=1)
         buttons.columnconfigure(1, weight=1)
         buttons.columnconfigure(2, weight=1)
+        buttons.columnconfigure(3, weight=1)
 
         ttk.Button(buttons, text="Save Config", command=self.save_config).grid(row=0, column=0, sticky="ew", padx=(0, 6))
         ttk.Button(buttons, text="Preview", command=self._refresh_command_preview).grid(row=0, column=1, sticky="ew", padx=3)
-        ttk.Button(buttons, text="Run", command=self.run_current).grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        ttk.Button(buttons, text="Reject Tool", command=self._clear_pending_tool_request).grid(row=0, column=2, sticky="ew", padx=3)
+        self.run_button = ttk.Button(buttons, text="Run", command=self.run_current)
+        self.run_button.grid(row=0, column=3, sticky="ew", padx=(6, 0))
 
         ttk.Label(side, textvariable=self.status).grid(row=5, column=0, sticky="w", pady=(10, 0))
 
@@ -171,20 +200,34 @@ class EasyGrokUI(tk.Tk):
         tab = ttk.Frame(self.tabs, padding=10)
         self.tabs.add(tab, text="Text")
         tab.columnconfigure(0, weight=1)
-        tab.rowconfigure(5, weight=1)
+        tab.rowconfigure(6, weight=1)
 
         self._entry(tab, "Text model", self.text_model, 0, model_category="language")
         ttk.Label(tab, text="System prompt").grid(row=1, column=0, sticky="w", pady=(8, 2))
-        self.text_system = tk.Text(tab, height=7, wrap="word")
+        self.text_system = self._text(tab, height=7, wrap="word")
         self.text_system.insert("1.0", get_nested(self.cfg, "text.system_prompt", ""))
         self.text_system.grid(row=2, column=0, sticky="ew")
 
-        ttk.Label(tab, text="User prompt").grid(row=3, column=0, sticky="w", pady=(8, 2))
-        self.text_prompt = tk.Text(tab, height=12, wrap="word")
-        self.text_prompt.insert("1.0", get_nested(self.cfg, "text.user_prompt", ""))
-        self.text_prompt.grid(row=4, column=0, sticky="nsew")
+        attachment = ttk.Frame(tab)
+        attachment.grid(row=3, column=0, sticky="ew", pady=(14, 8))
+        attachment.columnconfigure(1, weight=1)
+        ttk.Label(attachment, text="Image URL (manual)").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 8))
+        ttk.Entry(attachment, textvariable=self.text_image_url).grid(row=0, column=1, columnspan=3, sticky="ew", pady=(0, 8))
+        ttk.Label(attachment, text="Image file").grid(row=1, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(attachment, textvariable=self.text_image_file).grid(row=1, column=1, sticky="ew")
+        ttk.Button(attachment, text="Browse", command=lambda: self._browse_file(self.text_image_file)).grid(row=1, column=2, padx=(8, 0))
+        ttk.Button(attachment, text="Use Recent Generate", command=self._prepare_recent_generate_review).grid(row=1, column=3, padx=(8, 0))
+        self.text_image_url.trace_add("write", lambda *_args: self._refresh_command_preview())
+        self.text_image_file.trace_add("write", lambda *_args: self._refresh_command_preview())
 
-        ttk.Button(tab, text="Use Text Route", command=self._refresh_command_preview).grid(row=6, column=0, sticky="w", pady=(10, 0))
+        ttk.Label(tab, text="User prompt").grid(row=5, column=0, sticky="w", pady=(8, 2))
+        self.text_prompt = self._text(tab, height=12, wrap="word")
+        self.text_prompt.insert("1.0", get_nested(self.cfg, "text.user_prompt", ""))
+        self.text_prompt.grid(row=6, column=0, sticky="nsew")
+
+        actions = ttk.Frame(tab)
+        actions.grid(row=8, column=0, sticky="w", pady=(10, 0))
+        ttk.Button(actions, text="Use Text Route", command=self._refresh_command_preview).pack(side="left")
 
     def _build_vision_tab(self):
         tab = ttk.Frame(self.tabs, padding=10)
@@ -203,7 +246,7 @@ class EasyGrokUI(tk.Tk):
         ttk.Button(file_row, text="Browse", command=lambda: self._browse_file(self.vision_file)).grid(row=0, column=2, padx=(8, 0))
 
         ttk.Label(tab, text="Vision prompt").grid(row=3, column=0, sticky="w", pady=(8, 2))
-        self.vision_prompt = tk.Text(tab, height=12, wrap="word")
+        self.vision_prompt = self._text(tab, height=12, wrap="word")
         self.vision_prompt.insert("1.0", get_nested(self.cfg, "vision.user_prompt", get_nested(self.cfg, "vision.question", "")))
         self.vision_prompt.grid(row=4, column=0, sticky="nsew")
 
@@ -240,7 +283,7 @@ class EasyGrokUI(tk.Tk):
         self._entry(tab, "Reference input files (semicolon separated)", self.input_files, 3, browse_multi=True)
 
         ttk.Label(tab, text="Image prompt").grid(row=8, column=0, sticky="w", pady=(8, 2))
-        self.image_prompt = tk.Text(tab, height=16, wrap="word")
+        self.image_prompt = self._text(tab, height=16, wrap="word")
         self.image_prompt.insert("1.0", get_nested(self.cfg, "image.prompt", ""))
         self.image_prompt.grid(row=9, column=0, sticky="nsew")
 
@@ -255,7 +298,7 @@ class EasyGrokUI(tk.Tk):
 
         self._entry(tab, "Video model placeholder", self.video_model, 0, model_category="video")
         ttk.Label(tab, text="Video prompt").grid(row=1, column=0, sticky="w", pady=(8, 2))
-        self.video_prompt = tk.Text(tab, height=12, wrap="word")
+        self.video_prompt = self._text(tab, height=12, wrap="word")
         self.video_prompt.insert("1.0", get_nested(self.cfg, "video.prompt", ""))
         self.video_prompt.grid(row=2, column=0, sticky="nsew")
         ttk.Label(tab, text="Current video route is a scaffold only. It does not call a generation API yet.").grid(
@@ -291,7 +334,7 @@ class EasyGrokUI(tk.Tk):
         context_frame.columnconfigure(0, weight=1)
         context_frame.rowconfigure(0, weight=1)
 
-        self.memory_context_list = tk.Listbox(context_frame, exportselection=False)
+        self.memory_context_list = tk.Listbox(context_frame, exportselection=False, font=self.mono_font)
         self.memory_context_list.grid(row=0, column=0, sticky="nsew")
         for item in get_nested(self.cfg, "memory.context_files", []) or []:
             self.memory_context_list.insert("end", str(item))
@@ -318,7 +361,7 @@ class EasyGrokUI(tk.Tk):
         ttk.Button(buttons, text="Reset Session", command=self._reset_session).pack(side="left", padx=(8, 0))
         ttk.Button(buttons, text="Archive + Reset", command=self._archive_and_reset_session).pack(side="left", padx=(8, 0))
 
-        self.memory_status_text = tk.Text(right, height=8, width=48, wrap="word")
+        self.memory_status_text = self._text(right, height=8, width=48, wrap="word")
         self.memory_status_text.grid(row=1, column=0, sticky="nsew")
         self.memory_status_text.configure(state="disabled")
 
@@ -344,7 +387,7 @@ class EasyGrokUI(tk.Tk):
         left.rowconfigure(0, weight=1)
         left.columnconfigure(0, weight=1)
 
-        self.log_list = tk.Listbox(left, exportselection=False)
+        self.log_list = tk.Listbox(left, exportselection=False, font=self.mono_font)
         self.log_list.grid(row=0, column=0, sticky="nsew")
         self.log_list.bind("<<ListboxSelect>>", lambda _event: self._load_selected_log())
         log_scroll = ttk.Scrollbar(left, orient="vertical", command=self.log_list.yview)
@@ -356,11 +399,11 @@ class EasyGrokUI(tk.Tk):
         right.rowconfigure(1, weight=1)
         right.columnconfigure(0, weight=1)
 
-        self.log_meta_text = tk.Text(right, height=9, wrap="word")
+        self.log_meta_text = self._text(right, height=9, wrap="word")
         self.log_meta_text.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         self.log_meta_text.configure(state="disabled")
 
-        self.log_body_text = tk.Text(right, wrap="word")
+        self.log_body_text = self._text(right, wrap="word")
         self.log_body_text.grid(row=1, column=0, sticky="nsew")
 
         self._refresh_log_list()
@@ -636,6 +679,58 @@ class EasyGrokUI(tk.Tk):
             path = out_dir / path
         return path
 
+    def _latest_image_file(self, since_ts: float | None = None) -> Path | None:
+        image_dir = self._configured_media_dir("image")
+        if not image_dir.exists():
+            return None
+        extensions = {".jpg", ".jpeg", ".png", ".webp"}
+        files = [p for p in image_dir.iterdir() if p.is_file() and p.suffix.lower() in extensions]
+        if since_ts is not None:
+            files = [p for p in files if p.stat().st_mtime >= since_ts - 2]
+        if not files:
+            return None
+        return max(files, key=lambda p: p.stat().st_mtime)
+
+    def _review_prompt_for_image(self, image_path: Path) -> str:
+        return (
+            "この生成結果を見て、狙い通りか評価し、改善案があれば返して。\n\n"
+            f"画像ファイル: {image_path.as_posix()}"
+        )
+
+    def _set_recent_generate(self, image_path: Path):
+        self.recent_generate_file.set(str(image_path))
+        self.last_review_image_file = str(image_path)
+        self.status.set("Recent Generate updated")
+        self._log(f"Recent Generate updated: {self._display_path(str(image_path))}")
+
+    def _prepare_image_review(self, image_path: Path):
+        self.text_image_url.set("")
+        self.text_image_file.set(str(image_path))
+        self.text_prompt.delete("1.0", "end")
+        self.text_prompt.insert("1.0", self._review_prompt_for_image(image_path))
+        self.tabs.select(0)
+        self.pending_tool_request = None
+        self.pending_tool_command = []
+        self._refresh_command_preview()
+        self.status.set("Recent Generate prepared for review")
+        self._log(f"Recent Generate moved to Text attachment: {self._display_path(str(image_path))}")
+
+    def _prepare_recent_generate_review(self):
+        recent = self.recent_generate_file.get().strip()
+        image_path = self._project_path(recent) if recent else self._latest_image_file()
+        if not image_path:
+            messagebox.showinfo("EasyGrok", f"No image files found in:\n{self._configured_media_dir('image')}")
+            return
+        if not image_path.exists():
+            messagebox.showerror("EasyGrok", f"Recent Generate file not found:\n{image_path}")
+            return
+        self._prepare_image_review(image_path)
+
+    def _route_from_command(self, cmd: list[str] | None) -> str:
+        if not cmd or len(cmd) <= 4:
+            return ""
+        return str(cmd[4])
+
     def _refresh_log_list(self):
         if not hasattr(self, "log_list"):
             return
@@ -728,6 +823,91 @@ class EasyGrokUI(tk.Tk):
 
     def _base_easy_command(self) -> list[str]:
         return [sys.executable, str(EASY_PATH), "-c", str(CONFIG_PATH)]
+
+    def _tool_command_from_request(self, request: dict) -> list[str]:
+        return build_easy_command_from_request(
+            request,
+            python_path=sys.executable,
+            easy_path=str(EASY_PATH),
+            config_path=str(CONFIG_PATH),
+            cfg=self.cfg,
+        )
+
+    def _clear_pending_tool_request(self):
+        if not self.pending_tool_request:
+            self.status.set("No pending tool request")
+            return
+        self.pending_tool_request = None
+        self.pending_tool_command = []
+        self.status.set("Tool request rejected")
+        self._log("Tool request rejected.")
+        self._refresh_command_preview()
+
+    def _maybe_set_pending_tool_request(self, output: str):
+        request = extract_tool_request(output)
+        if not request:
+            return
+        request = self._complete_tool_request_from_current_context(request)
+        try:
+            command = self._tool_command_from_request(request)
+        except ToolRequestError as exc:
+            self._log(f"Tool request rejected by validator: {exc}")
+            self.status.set("Invalid tool request")
+            return
+        self.pending_tool_request = request
+        self.pending_tool_command = command
+        self.status.set("Tool request pending approval")
+        self._log("Tool request detected. Review Command Preview, then Run to approve or Reject Tool.")
+        self._refresh_command_preview()
+
+    def _complete_tool_request_from_current_context(self, request: dict) -> dict:
+        completed = copy.deepcopy(request)
+        if completed.get("route") != "image":
+            return completed
+
+        args = completed.get("args")
+        if not isinstance(args, dict):
+            return completed
+
+        mode = str(args.get("mode") or "generate")
+        if mode not in {"edit", "reference_edit"}:
+            return completed
+
+        attached_file = self.text_image_file.get().strip()
+        if not attached_file:
+            return completed
+
+        if mode == "edit":
+            if not self._usable_local_image_path(args.get("input_file")):
+                args["input_file"] = attached_file
+                self._log("Tool request input_file filled from current text attachment.")
+            return completed
+
+        input_files = args.get("input_files")
+        if self._usable_local_image_list(input_files) or self._usable_local_image_path(args.get("input_file")):
+            return completed
+
+        args["input_file"] = attached_file
+        args.pop("input_files", None)
+        self._log("Tool request reference image filled from current text attachment.")
+        return completed
+
+    def _usable_local_image_list(self, value) -> bool:
+        if isinstance(value, str):
+            return self._usable_local_image_path(value)
+        if isinstance(value, list) and value:
+            return all(self._usable_local_image_path(item) for item in value)
+        return False
+
+    def _usable_local_image_path(self, value) -> bool:
+        if not value or not isinstance(value, str):
+            return False
+        if any(marker in value.lower() for marker in ["path/to", "c:/path", "添付画像", "指定して"]):
+            return False
+        path = Path(value)
+        if not path.is_absolute():
+            path = BASE_DIR / path
+        return path.exists()
 
     def _replay_command_from_record(self, record: dict | None) -> list[str]:
         if not record:
@@ -919,7 +1099,7 @@ class EasyGrokUI(tk.Tk):
 
         ttk.Label(frame, text=f"model_catalog.{category}").grid(row=0, column=0, sticky="w")
 
-        listbox = tk.Listbox(frame, exportselection=False)
+        listbox = tk.Listbox(frame, exportselection=False, font=self.ui_font)
         listbox.grid(row=1, column=0, sticky="nsew", pady=(6, 10))
         for name in names:
             listbox.insert("end", name)
@@ -996,6 +1176,8 @@ class EasyGrokUI(tk.Tk):
 
         set_nested(self.cfg, "text.system_prompt", self._text_value(self.text_system))
         set_nested(self.cfg, "text.user_prompt", self._text_value(self.text_prompt))
+        set_nested(self.cfg, "text.image_url", self.text_image_url.get().strip())
+        set_nested(self.cfg, "text.image_file", self.text_image_file.get().strip())
 
         set_nested(self.cfg, "vision.image_url", self.vision_url.get().strip())
         set_nested(self.cfg, "vision.user_prompt", self._text_value(self.vision_prompt))
@@ -1028,6 +1210,10 @@ class EasyGrokUI(tk.Tk):
         if tab == "Text":
             prompt = self._text_value(self.text_prompt)
             cmd += ["text"]
+            if self.text_image_file.get().strip():
+                cmd += ["--image-file", self.text_image_file.get().strip()]
+            elif self.text_image_url.get().strip():
+                cmd += ["--image-url", self.text_image_url.get().strip()]
             if prompt:
                 cmd.append(prompt)
             return cmd
@@ -1107,21 +1293,25 @@ class EasyGrokUI(tk.Tk):
 
     def _refresh_command_preview(self):
         try:
-            tab = self._active_tab_name()
-            if tab == "Memory":
-                self.current_command = []
-                preview = self._format_memory_notes()
-            elif tab == "Output":
-                self.current_command = []
-                preview = self._format_output_notes()
+            if self.pending_tool_request:
+                self.current_command = self.pending_tool_command.copy()
+                preview = self._format_tool_request_preview(self.pending_tool_request, self.current_command)
             else:
-                self.current_command = self._build_command()
-                if self.current_command:
-                    preview = self._format_command_preview(self.current_command)
-                elif tab == "Logs":
-                    preview = "No replay command available for the selected log."
+                tab = self._active_tab_name()
+                if tab == "Memory":
+                    self.current_command = []
+                    preview = self._format_memory_notes()
+                elif tab == "Output":
+                    self.current_command = []
+                    preview = self._format_output_notes()
                 else:
-                    preview = "No command available."
+                    self.current_command = self._build_command()
+                    if self.current_command:
+                        preview = self._format_command_preview(self.current_command)
+                    elif tab == "Logs":
+                        preview = "No replay command available for the selected log."
+                    else:
+                        preview = "No command available."
         except Exception as exc:
             preview = f"Could not build command: {exc}"
             self.current_command = []
@@ -1129,6 +1319,15 @@ class EasyGrokUI(tk.Tk):
         self.command_text.delete("1.0", "end")
         self.command_text.insert("1.0", preview)
         self.command_text.configure(state="disabled")
+        if hasattr(self, "run_button"):
+            self.run_button.configure(text="Approve Tool" if self.pending_tool_request else "Run")
+
+    def _format_tool_request_preview(self, request: dict, cmd: list[str]) -> str:
+        return "\n".join([
+            tool_request_summary(request),
+            "",
+            self._format_command_preview(cmd),
+        ])
 
     def _format_memory_notes(self) -> str:
         context_files = self._context_files_from_list()
@@ -1212,16 +1411,45 @@ class EasyGrokUI(tk.Tk):
         if not self.current_command:
             messagebox.showerror("EasyGrok", "No command to run.")
             return
+        if self.pending_tool_request and not self._confirm_pending_tool_request():
+            self.status.set("Tool approval cancelled")
+            self._log("Tool approval cancelled.")
+            return
 
         self.process_running = True
         self.status.set("Running...")
         self._log("")
         self._log("$ " + subprocess.list2cmdline(self.current_command))
 
-        thread = threading.Thread(target=self._run_worker, args=(self.current_command.copy(),), daemon=True)
+        cmd_to_run = self.current_command.copy()
+        run_started_at = datetime.now().timestamp()
+        if self.pending_tool_request:
+            self._log("Approved pending tool request.")
+            self.pending_tool_request = None
+            self.pending_tool_command = []
+
+        thread = threading.Thread(target=self._run_worker, args=(cmd_to_run, run_started_at), daemon=True)
         thread.start()
 
-    def _run_worker(self, cmd: list[str]):
+    def _confirm_pending_tool_request(self) -> bool:
+        route = self.pending_tool_request.get("route", "") if self.pending_tool_request else ""
+        args = self.pending_tool_request.get("args", {}) if self.pending_tool_request else {}
+        prompt = str(args.get("prompt") or "")
+        if len(prompt) > 160:
+            prompt = prompt[:157] + "..."
+        message = "\n".join([
+            "Grok is requesting permission to run an EasyGrok tool.",
+            "",
+            f"Route: {route}",
+            f"Prompt: {prompt or '(from config or omitted)'}",
+            "",
+            "Approve and execute this command?",
+            "",
+            subprocess.list2cmdline([self._display_path(part) for part in self.current_command]),
+        ])
+        return bool(messagebox.askyesno("Approve EasyGrok Tool Request", message))
+
+    def _run_worker(self, cmd: list[str], run_started_at: float):
         try:
             env = os.environ.copy()
             env["PYTHONIOENCODING"] = "utf-8"
@@ -1236,14 +1464,20 @@ class EasyGrokUI(tk.Tk):
             output = decode_process_output(proc.stdout)
             if proc.stderr:
                 output += "\n[stderr]\n" + decode_process_output(proc.stderr)
-            self.after(0, lambda: self._finish_run(proc.returncode, output))
+            self.after(0, lambda: self._finish_run(proc.returncode, output, cmd, run_started_at))
         except Exception as exc:
-            self.after(0, lambda: self._finish_run(1, str(exc)))
+            self.after(0, lambda: self._finish_run(1, str(exc), cmd, run_started_at))
 
-    def _finish_run(self, returncode: int, output: str):
+    def _finish_run(self, returncode: int, output: str, cmd: list[str] | None = None, run_started_at: float | None = None):
         self._log(output.strip() or "(no output)")
         self.status.set(f"Finished with exit code {returncode}")
         self.process_running = False
+        if returncode == 0:
+            self._maybe_set_pending_tool_request(output)
+            if self._route_from_command(cmd) in {"image", "imagine", "imagine-natural"}:
+                image_path = self._latest_image_file(run_started_at)
+                if image_path:
+                    self._set_recent_generate(image_path)
 
     def _log(self, text: str):
         self.output_text.insert("end", text + "\n")

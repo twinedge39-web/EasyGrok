@@ -264,6 +264,8 @@ def cmd_text(args) -> int:
         context_files=args.context,
         no_context=bool(args.no_context),
         no_session=bool(args.no_session),
+        image_url=args.image_url,
+        image_file=args.image_file,
     )
     return 0
 
@@ -366,6 +368,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_text = sub.add_parser("text", help="Run text LLM")
     p_text.add_argument("prompt", nargs="?", help="Override user prompt")
     p_text.add_argument("--system", help="Override system prompt")
+    p_text.add_argument("--image-url", help="Attach image URL to this text run")
+    p_text.add_argument("--image-file", help="Attach local image file to this text run")
     p_text.add_argument("--context", nargs="+", help="Override Markdown context files for this run")
     p_text.add_argument("--no-context", action="store_true", help="Disable Markdown context for this run")
     p_text.add_argument("--no-session", action="store_true", help="Do not append this text run to the session log")

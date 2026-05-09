@@ -78,6 +78,39 @@ def safe_get_image_url(resp) -> Optional[str]:
         return None
 
 
+def format_image_api_error(exc: Exception) -> str:
+    code_fn = getattr(exc, "code", None)
+    details_fn = getattr(exc, "details", None)
+    code = None
+    details = None
+    if callable(code_fn):
+        try:
+            code = code_fn()
+        except Exception:
+            code = None
+    if callable(details_fn):
+        try:
+            details = details_fn()
+        except Exception:
+            details = None
+    if code or details:
+        code_name = getattr(code, "name", str(code)) if code else "UNKNOWN"
+        detail_text = str(details or exc)
+        return (
+            f"Image API unavailable ({code_name}): {detail_text}\n"
+            "This is usually a temporary upstream or network-side failure. "
+            "Retry the same command, or try a different model/resolution if it repeats."
+        )
+    return f"Image API error: {exc}"
+
+
+def sample_image_or_exit(client: Client, **kwargs):
+    try:
+        return client.image.sample(**kwargs)
+    except Exception as exc:
+        raise SystemExit(f"ERROR: {format_image_api_error(exc)}")
+
+
 def parse_json_object_from_text(text: str) -> dict:
     raw = (text or "").strip()
     if raw.startswith("```"):
@@ -308,7 +341,8 @@ def run_image(cfg: dict,
             raise SystemExit("ERROR: image.prompt is empty.")
         llm_rewritten_prompt = _rewrite_prompt_with_llm(prompt)
         effective_prompt = _effective_prompt(llm_rewritten_prompt)
-        resp = client.image.sample(
+        resp = sample_image_or_exit(
+            client,
             prompt=effective_prompt, model=model, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
         _capture_single_image(resp, "image_generate")
@@ -340,7 +374,8 @@ def run_image(cfg: dict,
         data_url = _data_url_from_file(in_file)
         llm_rewritten_prompt = _rewrite_prompt_with_llm(prompt)
         effective_prompt = _effective_prompt(llm_rewritten_prompt)
-        resp = client.image.sample(
+        resp = sample_image_or_exit(
+            client,
             prompt=effective_prompt, model=model, image_url=data_url, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
         _capture_single_image(resp, "image_edit")
@@ -381,7 +416,8 @@ def run_image(cfg: dict,
 
         llm_rewritten_prompt = _rewrite_prompt_with_llm(prompt)
         effective_prompt = _effective_prompt(llm_rewritten_prompt)
-        resp = client.image.sample(
+        resp = sample_image_or_exit(
+            client,
             prompt=effective_prompt, model=model, image_urls=image_urls, aspect_ratio=aspect_ratio, resolution=resolution, image_format=image_format
         )
         _capture_single_image(resp, "image_reference_edit")
@@ -553,7 +589,8 @@ def run_imagine(cfg: dict,
 
     if not dry_run:
         try:
-            image_resp = client.image.sample(
+            image_resp = sample_image_or_exit(
+                client,
                 prompt=effective_prompt,
                 model=image_model,
                 aspect_ratio=aspect_ratio,
@@ -581,8 +618,10 @@ def run_imagine(cfg: dict,
                         p = download_url_to_file(url_value, img_dir, f"image_imagine_{now_stamp()}_{i}")
                         if p:
                             saved_files.append(p.as_posix())
-        except Exception as e:
+        except SystemExit as e:
             image_error = str(e)
+        except Exception as e:
+            image_error = format_image_api_error(e)
 
     output_lines = [
         "PROMPT:",
@@ -700,7 +739,8 @@ def run_imagine_natural(cfg: dict,
 
     if not dry_run:
         try:
-            image_resp = client.image.sample(
+            image_resp = sample_image_or_exit(
+                client,
                 prompt=extracted_prompt,
                 model=image_model,
                 aspect_ratio=aspect_ratio,
@@ -728,8 +768,10 @@ def run_imagine_natural(cfg: dict,
                         p = download_url_to_file(url_value, img_dir, f"image_imagine_natural_{now_stamp()}_{i}")
                         if p:
                             saved_files.append(p.as_posix())
-        except Exception as e:
+        except SystemExit as e:
             image_error = str(e)
+        except Exception as e:
+            image_error = format_image_api_error(e)
 
     output_lines = [
         "NATURAL REPLY:",

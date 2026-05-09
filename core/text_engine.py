@@ -16,6 +16,7 @@ from .common import (
     output_record,
     session_enabled,
 )
+from .tool_runner import build_tool_instructions
 
 
 def _data_url_from_file(image_file: str) -> str:
@@ -32,7 +33,9 @@ def run_text(cfg: dict,
              system_override: Optional[str] = None,
              context_files: Optional[list[str]] = None,
              no_context: bool = False,
-             no_session: bool = False) -> None:
+             no_session: bool = False,
+             image_url: Optional[str] = None,
+             image_file: Optional[str] = None) -> None:
     timeout_sec = int(get_nested(cfg, "defaults.timeout_sec") or 3600)
     model = get_nested(cfg, "defaults.models.text_reasoning") or "grok-4-1-fast-reasoning"
     out_dir = get_nested(cfg, "defaults.output.dir") or "./out"
@@ -40,34 +43,82 @@ def run_text(cfg: dict,
 
     base_system_prompt = system_override or (get_nested(cfg, "text.system_prompt") or "You are a helpful assistant.")
     user_prompt = prompt_override or (get_nested(cfg, "text.user_prompt") or "Hello.")
+    model_user_prompt = user_prompt
+    img_payload = None
+    img_meta = None
+    if image_url and image_file:
+        raise SystemExit("ERROR: Use either image_url or image_file, not both.")
+    if not image_url and not image_file:
+        image_url = get_nested(cfg, "text.image_url")
+        image_file = get_nested(cfg, "text.image_file")
+    if image_url:
+        img_payload = image_url
+        img_meta = {"url_or_data": image_url}
+        model_user_prompt = _prompt_with_attachment_metadata(
+            user_prompt,
+            "image_url",
+            image_url,
+        )
+    elif image_file:
+        img_payload = _data_url_from_file(image_file)
+        img_meta = {"url_or_data": f"file:{image_file}"}
+        model_user_prompt = _prompt_with_attachment_metadata(
+            user_prompt,
+            "image_file",
+            image_file,
+        )
+    tool_block, tool_meta = build_tool_instructions(cfg)
     context_block, context_meta = build_context_block(cfg, context_files, no_context)
-    system_prompt = merge_system_with_context(base_system_prompt, context_block)
+    system_with_tools = merge_system_with_context(base_system_prompt, tool_block)
+    system_prompt = merge_system_with_context(system_with_tools, context_block)
 
     client = Client(api_key=get_api_key(), timeout=timeout_sec)
     chat = client.chat.create(model=model)
     if system_prompt:
         chat.append(system(system_prompt))
-    chat.append(user(user_prompt))
+    if img_payload:
+        chat.append(user(model_user_prompt, image(image_url=img_payload, detail="high")))
+    else:
+        chat.append(user(model_user_prompt))
 
     resp = chat.sample()
     content = getattr(resp, "content", "") or ""
     model_name = getattr(resp, "model", model)
     session_meta = {"enabled": False, "appended": False}
     if session_enabled(cfg, no_session):
-        session_meta = append_session_turn(cfg, user_prompt, content, model_name)
+        session_prompt = user_prompt
+        if img_meta:
+            session_prompt = f"[Image: {img_meta['url_or_data']}]\n\n{user_prompt}"
+        session_meta = append_session_turn(cfg, session_prompt, content, model_name)
 
     record = {
         "ts": datetime.now().isoformat(timespec="seconds"),
         "mode": "text",
         "model": model_name,
         "prompt": user_prompt,
+        "prompt_sent": model_user_prompt,
         "system": system_prompt,
         "base_system": base_system_prompt,
+        "tools": tool_meta,
         "context": context_meta,
         "session": session_meta,
+        "image": img_meta,
         "content": content,
     }
     output_record(cfg, out_path, "text", record)
+
+
+def _prompt_with_attachment_metadata(prompt: str, kind: str, value: str) -> str:
+    tool_hint = (
+        "If you output an EasyGrok tool request that uses this attached image, "
+        f"use this exact {kind} value."
+    )
+    return "\n\n".join([
+        prompt,
+        "[Attachment metadata]",
+        f"{kind}: {value}",
+        tool_hint,
+    ])
 
 
 def run_vision(cfg: dict,
