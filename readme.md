@@ -245,6 +245,14 @@ in this starter. The project keeps a Video tab and a placeholder route so the
 workflow can be extended later, but it avoids accidental video API calls and
 unexpected cost. Treat video experiments as a future explicit extension.
 
+## Roadmap
+
+EasyGrok is guided by transparent, reproducible, local-first runs with
+human-approved tool execution.
+
+- [Roadmap](docs/ROADMAP.md)
+- [日本語ロードマップ](docs/ROADMAP_JP.md)
+
 ## Public Safety
 
 This repository is a public-safe starter version.
