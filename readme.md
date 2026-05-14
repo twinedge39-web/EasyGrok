@@ -110,46 +110,77 @@ python easy_viewer.py --watch .\out --recursive --open-latest
 python easy_viewer.py --choose-folder --open-latest
 ```
 
-`easy_viewer.py` is a separate quick-preview monitor. It watches a folder,
-shows new images scaled to fit the screen, shows new videos as lightweight
-video placeholders, and reopens on the next file even if the preview window was
-closed. Use Left/Right to move through older or newer files, and Home/End to
-jump to the oldest or latest file. The viewer also shows the current file path,
-can copy it, can switch watch folders from the preview window, and can return
-to the startup folder with Root. Right-click the preview to copy the image,
-copy the path, copy basic and embedded metadata, open the file, open the folder,
-switch folders, or disable topmost mode.
+`easy_viewer.py` is a standalone quick-preview monitor. It does not call Grok
+or any generation API. It only watches a folder and displays new media files.
 
-Closing the preview window does not stop the watcher. It keeps running in the
-terminal and reopens automatically when a new matching file appears. Press
-Ctrl+C in the terminal to stop it. To show an existing file again, restart with
-`--open-latest`. You can also switch to another folder and manually drop images
-or videos into it; the viewer will pop back up for the new file.
+What it shows:
 
-Detailed embedded metadata is not shown inline. Use right-click `Copy Metadata`
-and paste it into a text field to inspect SD WebUI `parameters`, ComfyUI
-`prompt` / `workflow`, EXIF-like fields, or other metadata that the image file
-contains.
+- Images are scaled to fit the preview window.
+- Videos show a thumbnail when `ffmpeg` is available.
+- Videos fall back to a lightweight `VIDEO` placeholder when `ffmpeg` is not
+  available.
+- The preview window is topmost by default.
 
-The default viewer height is `860px`, matching the default `ui_tk.py` window
-height (`1400x860`). Override it with `--height` if you want a different side
-panel height.
+Basic controls:
 
-Use `--recursive` when watching an output root such as `.\out`; this lets the
-viewer pick up images in `out\images` and videos in folders such as
-`out\movies`.
+- Left / Right: move to older or newer files.
+- Home / End: jump to the oldest or latest file.
+- Folder...: switch the watched folder.
+- Root: return to the startup watch folder.
+- Ctrl+C in the terminal: stop the watcher.
 
-For videos, the viewer shows a thumbnail when `ffmpeg` is installed and
-available on `Path`; otherwise it falls back to the lightweight `VIDEO`
-placeholder. Install method depends on your Windows setup, so the only
-requirement is that this works in a new PowerShell:
+Right-click menu:
+
+- Copy Image
+- Copy Path
+- Copy Metadata
+- Open File
+- Open Folder
+- Choose Folder...
+- Return to Root
+- Disable Topmost / Enable Topmost
+
+Watcher behavior:
+
+- Closing the preview window does not stop the watcher.
+- The window reopens automatically when a new matching file appears.
+- To show an existing file again, restart with `--open-latest`.
+- You can manually drop images or videos into the watched folder.
+- Use `--recursive` to include subfolders such as `out\images` and
+  `out\movies`.
+
+Metadata:
+
+- The status bar shows basic metadata.
+- Detailed embedded metadata is copied with right-click `Copy Metadata`.
+- SD WebUI `parameters`, ComfyUI `prompt` / `workflow`, EXIF-like fields, and
+  other embedded fields are included when present.
+
+Window size:
+
+- Default height is `860px`, matching the default `ui_tk.py` window height
+  (`1400x860`).
+- Use `--height` to override it.
+
+Video thumbnails:
+
+`ffmpeg` is optional. If it is installed and available on `Path`, video
+thumbnails are generated automatically. The required check is:
 
 ```powershell
 ffmpeg -version
 ```
 
-One common setup is to download a Windows prebuilt FFmpeg zip, extract it, and
-add its `bin` folder to the user `Path`. For example:
+If the command is not recognized on Windows:
+
+1. Download a Windows prebuilt FFmpeg zip.
+2. Extract it somewhere stable, such as `C:\tools\ffmpeg`.
+3. Find the folder that contains `ffmpeg.exe`.
+4. Add that `bin` folder to the user `Path`.
+5. Open a new PowerShell.
+6. Run `ffmpeg -version` again.
+
+Example Path setup:
 
 ```powershell
 $ffmpegBin = "C:\tools\ffmpeg\bin"
@@ -159,8 +190,6 @@ if ($userPath -notlike "*$ffmpegBin*") {
     [Environment]::SetEnvironmentVariable("Path", "$userPath;$ffmpegBin", "User")
 }
 ```
-
-Open a new PowerShell after changing `Path`.
 
 Imagine relay:
 
