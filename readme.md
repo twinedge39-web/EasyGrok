@@ -100,6 +100,68 @@ Image generation with base64 file saving:
 python easy.py image "A clean product photo of a small robot assistant" --image-format base64
 ```
 
+Quick image preview viewer:
+
+```powershell
+python easy_viewer.py --watch .\out --recursive --open-latest
+```
+
+```powershell
+python easy_viewer.py --choose-folder --open-latest
+```
+
+`easy_viewer.py` is a separate quick-preview monitor. It watches a folder,
+shows new images scaled to fit the screen, shows new videos as lightweight
+video placeholders, and reopens on the next file even if the preview window was
+closed. Use Left/Right to move through older or newer files, and Home/End to
+jump to the oldest or latest file. The viewer also shows the current file path,
+can copy it, can switch watch folders from the preview window, and can return
+to the startup folder with Root. Right-click the preview to copy the image,
+copy the path, copy basic and embedded metadata, open the file, open the folder,
+switch folders, or disable topmost mode.
+
+Closing the preview window does not stop the watcher. It keeps running in the
+terminal and reopens automatically when a new matching file appears. Press
+Ctrl+C in the terminal to stop it. To show an existing file again, restart with
+`--open-latest`. You can also switch to another folder and manually drop images
+or videos into it; the viewer will pop back up for the new file.
+
+Detailed embedded metadata is not shown inline. Use right-click `Copy Metadata`
+and paste it into a text field to inspect SD WebUI `parameters`, ComfyUI
+`prompt` / `workflow`, EXIF-like fields, or other metadata that the image file
+contains.
+
+The default viewer height is `860px`, matching the default `ui_tk.py` window
+height (`1400x860`). Override it with `--height` if you want a different side
+panel height.
+
+Use `--recursive` when watching an output root such as `.\out`; this lets the
+viewer pick up images in `out\images` and videos in folders such as
+`out\movies`.
+
+For videos, the viewer shows a thumbnail when `ffmpeg` is installed and
+available on `Path`; otherwise it falls back to the lightweight `VIDEO`
+placeholder. Install method depends on your Windows setup, so the only
+requirement is that this works in a new PowerShell:
+
+```powershell
+ffmpeg -version
+```
+
+One common setup is to download a Windows prebuilt FFmpeg zip, extract it, and
+add its `bin` folder to the user `Path`. For example:
+
+```powershell
+$ffmpegBin = "C:\tools\ffmpeg\bin"
+$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+
+if ($userPath -notlike "*$ffmpegBin*") {
+    [Environment]::SetEnvironmentVariable("Path", "$userPath;$ffmpegBin", "User")
+}
+```
+
+Open a new PowerShell after changing `Path`.
+
 Imagine relay:
 
 ```powershell
