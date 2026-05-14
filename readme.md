@@ -100,18 +100,70 @@ Image generation with base64 file saving:
 python easy.py image "A clean product photo of a small robot assistant" --image-format base64
 ```
 
-Quick image preview viewer:
+Imagine relay:
+
+```powershell
+python easy.py imagine "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
+```
+
+Prompt conversion only:
+
+```powershell
+python easy.py imagine "静かな未来的な書斎の画像を作って。" --dry-run
+```
+
+Natural request relay:
+
+```powershell
+python easy.py imagine-natural "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
+```
+
+Natural prompt extraction only:
+
+```powershell
+python easy.py imagine-natural "静かな未来的な書斎の画像を作って。" --dry-run
+```
+
+Reference edit from local files:
+
+```powershell
+python easy.py image --mode reference_edit --input-files ".\ref1.jpg" ".\ref2.jpg" -- "Combine the visual style of both references."
+```
+
+Interactive menu:
+
+```powershell
+python easy.py menu
+```
+
+Tkinter prompt console:
+
+```powershell
+python ui_tk.py
+```
+
+The UI reads `config/config.user.json`, creates a timestamped backup before saving,
+previews the command it will run, and shows stdout/stderr after execution.
+
+## Preview Viewer
+
+`easy_viewer.py` is a standalone preview-only viewer for generated images and
+videos. It does not call Grok or any generation API. It only watches a folder
+and displays new media files.
+
+![EasyGrok preview viewer](docs/screenshots/easygrok-viewer.png)
+
+Watch the output root:
 
 ```powershell
 python easy_viewer.py --watch .\out --recursive --open-latest
 ```
 
+Choose a folder at startup:
+
 ```powershell
 python easy_viewer.py --choose-folder --open-latest
 ```
-
-`easy_viewer.py` is a standalone quick-preview monitor. It does not call Grok
-or any generation API. It only watches a folder and displays new media files.
 
 What it shows:
 
@@ -165,76 +217,17 @@ Window size:
 Video thumbnails:
 
 `ffmpeg` is optional. If it is installed and available on `Path`, video
-thumbnails are generated automatically. The required check is:
+thumbnails are generated automatically. If it is not available, videos still
+appear as lightweight `VIDEO` placeholders.
+
+Check availability with:
 
 ```powershell
 ffmpeg -version
 ```
 
-If the command is not recognized on Windows:
-
-1. Download a Windows prebuilt FFmpeg zip.
-2. Extract it somewhere stable, such as `C:\tools\ffmpeg`.
-3. Find the folder that contains `ffmpeg.exe`.
-4. Add that `bin` folder to the user `Path`.
-5. Open a new PowerShell.
-6. Run `ffmpeg -version` again.
-
-Example Path setup:
-
-```powershell
-$ffmpegBin = "C:\tools\ffmpeg\bin"
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-
-if ($userPath -notlike "*$ffmpegBin*") {
-    [Environment]::SetEnvironmentVariable("Path", "$userPath;$ffmpegBin", "User")
-}
-```
-
-Imagine relay:
-
-```powershell
-python easy.py imagine "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
-```
-
-Prompt conversion only:
-
-```powershell
-python easy.py imagine "静かな未来的な書斎の画像を作って。" --dry-run
-```
-
-Natural request relay:
-
-```powershell
-python easy.py imagine-natural "静かな未来的な書斎、暖かいデスクライト、映画的リアリズムの画像を作って。" --image-format base64
-```
-
-Natural prompt extraction only:
-
-```powershell
-python easy.py imagine-natural "静かな未来的な書斎の画像を作って。" --dry-run
-```
-
-Reference edit from local files:
-
-```powershell
-python easy.py image --mode reference_edit --input-files ".\ref1.jpg" ".\ref2.jpg" -- "Combine the visual style of both references."
-```
-
-Interactive menu:
-
-```powershell
-python easy.py menu
-```
-
-Tkinter prompt console:
-
-```powershell
-python ui_tk.py
-```
-
-The UI reads `config/config.user.json`, creates a timestamped backup before saving,
-previews the command it will run, and shows stdout/stderr after execution.
+Install FFmpeg using the method appropriate for your environment, then open a
+new terminal and confirm `ffmpeg -version` works.
 
 ## UI Workflow
 
