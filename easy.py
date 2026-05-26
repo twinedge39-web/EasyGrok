@@ -1,11 +1,10 @@
 import argparse
 import sys
 from pathlib import Path
+from copy import deepcopy
 
 from core.common import backup, get_cfg_path, get_nested, load_json, save_json, set_nested
-from core.image_engine import run_image, run_imagine, run_imagine_natural
-from core.text_engine import run_text, run_vision
-from core.video_engine import run_video
+from core import sd_adapter
 
 
 
@@ -141,6 +140,8 @@ def filtered_menu_with_run(cfg_path: Path, cfg: dict) -> None:
             continue
 
         if c == "t":
+            from core.text_engine import run_text
+
             _prompt_save_if_needed(cfg_path, cfg)
             try:
                 run_text(cfg)
@@ -149,6 +150,8 @@ def filtered_menu_with_run(cfg_path: Path, cfg: dict) -> None:
             continue
 
         if c == "v":
+            from core.text_engine import run_vision
+
             _prompt_save_if_needed(cfg_path, cfg)
             img_url = get_nested(cfg, "vision.image_url")
             img_file = None
@@ -171,6 +174,8 @@ def filtered_menu_with_run(cfg_path: Path, cfg: dict) -> None:
             continue
 
         if c == "i":
+            from core.image_engine import run_image
+
             _prompt_save_if_needed(cfg_path, cfg)
 
             current_format = get_nested(cfg, "image.response_format") or "url"
@@ -256,6 +261,8 @@ def cmd_menu(args) -> int:
 
 
 def cmd_text(args) -> int:
+    from core.text_engine import run_text
+
     cfg = load_json(get_cfg_path(args))
     run_text(
         cfg,
@@ -271,6 +278,8 @@ def cmd_text(args) -> int:
 
 
 def cmd_vision(args) -> int:
+    from core.text_engine import run_vision
+
     cfg = load_json(get_cfg_path(args))
     run_vision(
         cfg,
@@ -285,6 +294,8 @@ def cmd_vision(args) -> int:
 
 
 def cmd_image(args) -> int:
+    from core.image_engine import run_image
+
     cfg = load_json(get_cfg_path(args))
     run_image(
         cfg,
@@ -308,6 +319,8 @@ def cmd_image(args) -> int:
 
 
 def cmd_imagine(args) -> int:
+    from core.image_engine import run_imagine
+
     cfg = load_json(get_cfg_path(args))
     run_imagine(
         cfg,
@@ -327,6 +340,8 @@ def cmd_imagine(args) -> int:
 
 
 def cmd_imagine_natural(args) -> int:
+    from core.image_engine import run_imagine_natural
+
     cfg = load_json(get_cfg_path(args))
     run_imagine_natural(
         cfg,
@@ -345,12 +360,148 @@ def cmd_imagine_natural(args) -> int:
 
 
 def cmd_video(args) -> int:
+    from core.video_engine import run_video
+
     cfg = load_json(get_cfg_path(args))
     run_video(
         cfg,
         prompt_override=args.prompt,
         model_override=args.model,
     )
+    return 0
+
+
+def cmd_sd(args) -> int:
+    cfg = sd_adapter.load_sd_config(args.sd_config)
+    any_action = any(
+        [
+            args.check,
+            args.summary,
+            args.options,
+            args.models,
+            args.samplers,
+            args.schedulers,
+            args.preview,
+            args.execute,
+        ]
+    )
+
+    if not any_action:
+        args.check = True
+        args.summary = True
+
+    if args.check:
+        progress = sd_adapter.check_sd(cfg)
+        state = progress.get("state") or {}
+        sd_adapter.print_json(
+            {
+                "ok": True,
+                "progress": progress.get("progress"),
+                "job": state.get("job"),
+                "job_count": state.get("job_count"),
+            }
+        )
+
+    if args.summary or args.options:
+        options = sd_adapter.get_options(cfg)
+        summary = sd_adapter.summarize_options(cfg, options)
+        if args.options:
+            sd_adapter.print_json(summary)
+        else:
+            print(sd_adapter.format_summary_text(summary))
+
+    if args.models:
+        for item in sd_adapter.get_models(cfg):
+            print(item.get("title") or item.get("model_name") or str(item))
+
+    if args.samplers:
+        for item in sd_adapter.get_samplers(cfg):
+            print(item.get("name") or str(item))
+
+    if args.schedulers:
+        for item in sd_adapter.get_schedulers(cfg):
+            print(item.get("label") or item.get("name") or str(item))
+
+    if args.preview or args.execute:
+        mode, payload = sd_adapter.build_payload(
+            cfg,
+            mode=args.mode,
+            prompt_override=args.prompt,
+            negative_override=args.negative,
+            input_image=args.input_image,
+            denoising_strength=args.denoising_strength,
+            width=args.width,
+            height=args.height,
+            steps=args.steps,
+            cfg_scale=args.cfg_scale,
+            sampler_name=args.sampler,
+            scheduler=args.scheduler,
+            seed=args.seed,
+            resize_mode=args.resize_mode,
+        )
+        if args.preview:
+            sd_adapter.print_json({"mode": mode, "payload": sd_adapter.scrub_payload_for_print(payload)})
+        if args.execute:
+            sd_adapter.print_json(sd_adapter.execute_payload(cfg, mode, payload))
+
+    return 0
+
+
+def cmd_sd_ask(args) -> int:
+    from core import sd_ask, sd_config
+
+    if not args.request and not args.input_json:
+        raise SystemExit("ERROR: Provide a request text or --input-json.")
+
+    easy_cfg = load_json(get_cfg_path(args))
+    current_sd_cfg = sd_config.load_sd_config(args.sd_config)
+    input_json = sd_ask.load_input_json(args.input_json)
+    result = sd_ask.ask_for_sd_patch(
+        easy_cfg,
+        current_sd_cfg,
+        args.request or "",
+        input_json=input_json,
+        model_override=args.model,
+        persona_path=args.persona,
+        session_memory_path=args.session_memory,
+        use_session_memory=not bool(args.no_session_memory),
+    )
+    patch = result["patch"]
+
+    if args.patch_only and not args.dry_run and not args.apply:
+        sd_ask.print_json(patch)
+        return 0
+
+    output = {
+        "ok": True,
+        "model": result["model"],
+        "patch": patch,
+    }
+
+    if args.include_raw:
+        output["raw"] = result["content"]
+
+    if args.dry_run or args.apply:
+        preview = sd_ask.dry_run_patch(current_sd_cfg, patch)
+        output["dry_run"] = preview
+        if preview["issues"]:
+            output["ok"] = False
+            if args.apply:
+                output["saved"] = None
+                sd_ask.print_json(output)
+                return 1
+
+    if args.apply:
+        candidate = deepcopy(current_sd_cfg)
+        changed = sd_config.apply_patch(candidate, patch)
+        save_result = sd_config.save_sd_config(args.sd_config, candidate, create_backup=not args.no_backup)
+        output["applied"] = {
+            "changed": changed,
+            "saved": save_result["saved"],
+            "backup": save_result["backup"],
+        }
+
+    sd_ask.print_json(output)
     return 0
 
 
@@ -433,6 +584,46 @@ def build_parser() -> argparse.ArgumentParser:
     p_video.add_argument("prompt", nargs="?", help="Video prompt placeholder")
     p_video.add_argument("--model", help="Override video model placeholder")
     p_video.set_defaults(fn=cmd_video)
+
+    p_sd = sub.add_parser("sd", help="Local Stable Diffusion API adapter")
+    p_sd.add_argument("prompt", nargs="?", help="Prompt override for preview/execute")
+    p_sd.add_argument("--sd-config", default="config/config.sd.json", help="SD config JSON path")
+    p_sd.add_argument("--check", action="store_true", help="Check local SD API progress endpoint")
+    p_sd.add_argument("--summary", action="store_true", help="Print compact live settings summary")
+    p_sd.add_argument("--options", action="store_true", help="Print selected live options as JSON")
+    p_sd.add_argument("--models", action="store_true", help="List checkpoint titles")
+    p_sd.add_argument("--samplers", action="store_true", help="List sampler names")
+    p_sd.add_argument("--schedulers", action="store_true", help="List scheduler labels")
+    p_sd.add_argument("--mode", choices=["txt2img", "img2img"], help="Generation mode override")
+    p_sd.add_argument("--preview", action="store_true", help="Print SD payload without generating")
+    p_sd.add_argument("--execute", action="store_true", help="Run SD generation and save returned PNG files")
+    p_sd.add_argument("--negative", help="Negative prompt override")
+    p_sd.add_argument("--input-image", help="Input image path for img2img")
+    p_sd.add_argument("--denoising-strength", type=float)
+    p_sd.add_argument("--resize-mode", type=int)
+    p_sd.add_argument("--width", type=int)
+    p_sd.add_argument("--height", type=int)
+    p_sd.add_argument("--steps", type=int)
+    p_sd.add_argument("--cfg-scale", type=float)
+    p_sd.add_argument("--sampler")
+    p_sd.add_argument("--scheduler")
+    p_sd.add_argument("--seed", type=int)
+    p_sd.set_defaults(fn=cmd_sd)
+
+    p_sd_ask = sub.add_parser("sd-ask", help="Ask Grok to produce a safe SD config JSON patch")
+    p_sd_ask.add_argument("request", nargs="?", help="Natural language SD config edit request")
+    p_sd_ask.add_argument("--sd-config", default="config/config.sd.json", help="SD config JSON path")
+    p_sd_ask.add_argument("--input-json", help="Optional JSON file to include as source material")
+    p_sd_ask.add_argument("--model", help="Override Grok text model")
+    p_sd_ask.add_argument("--persona", help="Override SD Ask persona Markdown path")
+    p_sd_ask.add_argument("--session-memory", help="Override SD Ask session memory Markdown path")
+    p_sd_ask.add_argument("--no-session-memory", action="store_true", help="Do not include SD Ask session memory")
+    p_sd_ask.add_argument("--patch-only", action="store_true", help="Print only the returned JSON patch")
+    p_sd_ask.add_argument("--include-raw", action="store_true", help="Include raw Grok response in output")
+    p_sd_ask.add_argument("--dry-run", action="store_true", help="Validate patch against current SD config without saving")
+    p_sd_ask.add_argument("--apply", action="store_true", help="Apply returned patch to SD config after validation")
+    p_sd_ask.add_argument("--no-backup", action="store_true", help="Do not create a config backup when --apply is used")
+    p_sd_ask.set_defaults(fn=cmd_sd_ask)
 
     return ap
 

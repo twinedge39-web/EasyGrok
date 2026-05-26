@@ -1,0 +1,73 @@
+{
+  "profile": {
+    "name": "default_yayoi_photo",
+    "backend": "forge_a1111"
+  },
+  "connection": {
+    "api_url": "http://127.0.0.1:7860",
+    "timeout_sec": 3600
+  },
+  "generation": {
+    "mode": "txt2img",
+    "prompt": "realistic portrait photo of a Japanese bishoujo, young adult woman, East Asian features, clear facial details, upper body framing, soft window light, natural skin texture, high quality photography",
+    "negative_prompt": "lowres, blurry, bad anatomy, extra fingers, missing fingers, malformed hands, text, watermark, logo, cropped, nsfw, anime, illustration, drawing, painting, cartoon, red eyes, glowing eyes",
+    "common": {
+      "steps": 24,
+      "cfg_scale": 6.5,
+      "sampler_name": "DPM++ 2M SDE",
+      "scheduler": "Karras",
+      "seed": -1,
+      "batch_size": 1,
+      "max_batch_size": 1,
+      "n_iter": 1,
+      "max_n_iter": 4,
+      "restore_faces": false,
+      "tiling": false
+    },
+    "txt2img": {
+      "width": 768,
+      "height": 1024
+    },
+    "img2img": {
+      "input_image": "",
+      "width": 768,
+      "height": 1024,
+      "denoising_strength": 0.45,
+      "resize_mode": 0
+    }
+  },
+  "model": {
+    "checkpoint": "yayoiMix_v25.safetensors [50510fd74b]",
+    "vae": "vaeFtMse840000EmaPruned_vaeFtMse840k.safetensors",
+    "clip_skip": 1,
+    "apply_overrides": false
+  },
+  "style": {
+    "preset": "photographic",
+    "supplements": []
+  },
+  "save": {
+    "mode": "codex",
+    "codex_output_dir": "out/images/sd_images",
+    "metadata": true,
+    "replay_command": true
+  },
+  "inspect": {
+    "option_fields": [
+      "api_enable_requests",
+      "api_forbid_local_requests",
+      "sd_model_checkpoint",
+      "sd_checkpoint_hash",
+      "forge_preset",
+      "forge_additional_modules",
+      "sd_t2i_width",
+      "sd_t2i_height",
+      "sd_t2i_cfg",
+      "sd_i2i_width",
+      "sd_i2i_height",
+      "outdir_txt2img_samples",
+      "outdir_img2img_samples",
+      "outdir_save"
+    ]
+  }
+}

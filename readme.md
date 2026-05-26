@@ -145,6 +145,18 @@ python ui_tk.py
 The UI reads `config/config.user.json`, creates a timestamped backup before saving,
 previews the command it will run, and shows stdout/stderr after execution.
 
+SD GrokUI / local Stable Diffusion adapter:
+
+```powershell
+python sd_grok_ui.py
+```
+
+This is experimental and intentionally documented separately because several
+Grok-assisted and heavier SD workflows are still unverified. See
+[SD GrokUI / Local SD Adapter Status](docs/SD_GrokUI.md).
+
+![SD GrokUI draft review](docs/screenshots/sd-grokui.png)
+
 ## Preview Viewer
 
 `easy_viewer.py` is a standalone preview-only viewer for generated images and

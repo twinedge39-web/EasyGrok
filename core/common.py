@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Optional
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+CONFIG_DIR = BASE_DIR / "config"
+CONFIG_BACKUP_DIR = CONFIG_DIR / "backups"
 
 def load_json(path: Path) -> dict:
     if not path.exists():
@@ -70,7 +72,11 @@ def set_nested(d: dict, dotted_key: str, value: str) -> None:
 
 def backup(path: Path, data: dict) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    bak = path.with_suffix(path.suffix + f".bak_{stamp}")
+    cfg_path = Path(path)
+    backup_root = CONFIG_BACKUP_DIR if cfg_path.parent.resolve() == CONFIG_DIR.resolve() else cfg_path.parent / "backups"
+    bak_dir = backup_root / cfg_path.stem
+    bak_dir.mkdir(parents=True, exist_ok=True)
+    bak = bak_dir / f"{cfg_path.name}.bak_{stamp}"
     save_json(bak, data)
     return bak
 
@@ -257,11 +263,47 @@ def get_cfg_path(args) -> Path:
 
 
 def get_api_key() -> str:
-    api_key = os.getenv("XAI_API_KEY")
+    api_key = os.getenv("XAI_API_KEY") or get_windows_env_var("XAI_API_KEY")
     if not api_key:
         print("ERROR: XAI_API_KEY is not set in environment variables.", file=sys.stderr)
         raise SystemExit(2)
     return api_key
+
+
+def clear_dead_local_proxy_env() -> list[str]:
+    """Remove placeholder proxy values that make gRPC connect to localhost:9."""
+    cleared = []
+    for name in ("ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY", "GIT_HTTP_PROXY", "GIT_HTTPS_PROXY"):
+        value = os.getenv(name, "")
+        if "127.0.0.1:9" in value or "localhost:9" in value:
+            os.environ.pop(name, None)
+            cleared.append(name)
+    return cleared
+
+
+def get_windows_env_var(name: str) -> str:
+    if os.name != "nt":
+        return ""
+    try:
+        import winreg
+    except Exception:
+        return ""
+
+    locations = [
+        (winreg.HKEY_CURRENT_USER, "Environment"),
+        (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"),
+    ]
+    for root, subkey in locations:
+        try:
+            with winreg.OpenKey(root, subkey) as key:
+                value, _ = winreg.QueryValueEx(key, name)
+                if value:
+                    return str(value)
+        except FileNotFoundError:
+            continue
+        except OSError:
+            continue
+    return ""
 
 
 def safe_print(text: str = "") -> None:

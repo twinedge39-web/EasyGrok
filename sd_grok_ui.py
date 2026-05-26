@@ -1,4 +1,4 @@
-from ui.easygrok.app import main
+from ui.sd_grok_ui.app import main
 
 
 if __name__ == "__main__":

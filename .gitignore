@@ -1,17 +1,39 @@
+# Python environment
 .venv/
-venv/
+.venv_broken_*/
+
+# Python cache
 __pycache__/
 *.pyc
 
+# Outputs
 out/
 logs/
-tmp/
+outputs/
+generated/
+生成画像/
+out_test/
 
+# Secrets / local config
 .env
-*.key
-*.secret
-*.token
-
+*.env
 config/config.user.json
+config/config.sd.json
+config/backups/
 config/*.bak_*
-config/*.local.json
+config.local.*
+config.private.*
+archive/old_configs/config.user.json
+archive/old_configs/*.json
+archive/old_configs/*.bak_*
+
+# Local experiment memory / private references
+memory/session.md
+memory/session.md.bak_*
+memory/sd_ask_session.md
+memory/vision_notes.md
+assets/reference/
+assets/UI_Plan/
+
+# Public mirror is maintained separately
+public_easygrok/
